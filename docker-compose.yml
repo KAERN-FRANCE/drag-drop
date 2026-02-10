@@ -1,0 +1,13 @@
+services:
+  c1b-parser:
+    build:
+      context: ./Convertisseur C1B git/tachograph-analyzer
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - c1b-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  c1b-data:
