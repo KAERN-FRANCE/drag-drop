@@ -1,30 +1,22 @@
 FROM golang:1.22-alpine AS builder
 
-# Installer Python pour télécharger les clés publiques
-RUN apk add --no-cache python3 py3-pip py3-requests py3-lxml
+RUN apk add --no-cache git
 
-WORKDIR /build
-
-# Copier le code tachoparser
-COPY vendor/tachoparser/ ./tachoparser/
-
-# Télécharger les clés publiques
-WORKDIR /build/tachoparser/scripts/pks1
-RUN python3 dl_all_pks1.py || true
-
-WORKDIR /build/tachoparser/scripts/pks2
-RUN python3 dl_all_pks2.py || true
-
-# Compiler dddparser
 WORKDIR /build/tachoparser
-RUN go mod vendor && cd cmd/dddparser && go build -o /build/dddparser .
+
+# Copier le code source Go
+COPY vendor/tachoparser/ .
+
+# Télécharger les dépendances et compiler en binaire statique
+RUN go mod download && \
+    CGO_ENABLED=0 GOOS=linux go build -o /build/dddparser ./cmd/dddparser
 
 # === Image Python finale ===
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copier le binaire Go
+# Copier le binaire Go statique
 COPY --from=builder /build/dddparser /app/bin/dddparser
 RUN chmod +x /app/bin/dddparser
 
