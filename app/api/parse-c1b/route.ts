@@ -25,10 +25,30 @@ export async function POST(request: NextRequest) {
     const targetUrl = `${C1B_API_URL}/parse`
     console.log('[parse-c1b] Envoi vers:', targetUrl)
 
-    const response = await fetch(targetUrl, {
-      method: 'POST',
-      body: pythonFormData,
-    })
+    // Timeout de 120 secondes
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 120000)
+
+    let response
+    try {
+      response = await fetch(targetUrl, {
+        method: 'POST',
+        body: pythonFormData,
+        signal: controller.signal,
+      })
+    } catch (fetchError: any) {
+      clearTimeout(timeout)
+      console.error('[parse-c1b] Fetch error:', fetchError?.message, fetchError?.cause)
+
+      if (fetchError?.name === 'AbortError') {
+        return NextResponse.json(
+          { error: 'Le parser C1B a mis trop de temps à répondre (timeout 120s)' },
+          { status: 504 }
+        )
+      }
+      throw fetchError
+    }
+    clearTimeout(timeout)
 
     console.log('[parse-c1b] Réponse du parser:', response.status, response.statusText)
 
