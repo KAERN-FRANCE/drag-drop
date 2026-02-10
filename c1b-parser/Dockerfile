@@ -1,13 +1,22 @@
 FROM golang:1.22-alpine AS builder
 
-RUN apk add --no-cache git
+# Python + dépendances pour télécharger les certificats EU
+RUN apk add --no-cache git python3 py3-pip py3-requests py3-lxml
 
 WORKDIR /build/tachoparser
 
 # Copier le code source Go
 COPY vendor/tachoparser/ .
 
-# Télécharger les dépendances et compiler en binaire statique
+# Télécharger les certificats publics EU (nécessaires pour go:embed)
+WORKDIR /build/tachoparser/scripts/pks1
+RUN python3 dl_all_pks1.py || true
+
+WORKDIR /build/tachoparser/scripts/pks2
+RUN python3 dl_all_pks2.py || true
+
+# Compiler le binaire Go statique
+WORKDIR /build/tachoparser
 RUN go mod download && \
     CGO_ENABLED=0 GOOS=linux go build -o /build/dddparser ./cmd/dddparser
 
