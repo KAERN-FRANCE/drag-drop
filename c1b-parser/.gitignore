@@ -3,7 +3,6 @@ __pycache__/
 *.pyo
 .env
 data/tachograph.db
-vendor/tachoparser/
 bin/dddparser
 *.egg-info/
 dist/
