@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const runtime = 'nodejs'
+export const maxDuration = 120
+
 const C1B_API_URL = process.env.C1B_API_URL || 'http://localhost:8000'
 
 export async function POST(request: NextRequest) {
