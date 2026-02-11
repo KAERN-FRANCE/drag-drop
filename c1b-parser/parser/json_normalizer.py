@@ -126,11 +126,11 @@ def _extract_activities_from_card_gen1(data: dict) -> List[Activity]:
         return activities
 
     # Essayer decoded_activity_daily_records d'abord (structure réelle)
-    daily_records = card_activity.get("decoded_activity_daily_records", [])
+    daily_records = card_activity.get("decoded_activity_daily_records") or []
     if not daily_records:
-        daily_records = card_activity.get("card_driver_activity_daily_records", [])
+        daily_records = card_activity.get("card_driver_activity_daily_records") or []
     if not daily_records:
-        daily_records = card_activity.get("activity_daily_records", [])
+        daily_records = card_activity.get("activity_daily_records") or []
 
     for record in daily_records:
         record_date = record.get("activity_record_date", {})
@@ -206,11 +206,11 @@ def _extract_activities_from_card_gen2(data: dict) -> List[Activity]:
         return activities
 
     # Essayer decoded_activity_daily_records d'abord (structure réelle)
-    daily_records = card_activity.get("decoded_activity_daily_records", [])
+    daily_records = card_activity.get("decoded_activity_daily_records") or []
     if not daily_records:
-        daily_records = card_activity.get("card_driver_activity_daily_records", [])
+        daily_records = card_activity.get("card_driver_activity_daily_records") or []
     if not daily_records:
-        daily_records = card_activity.get("activity_daily_records", [])
+        daily_records = card_activity.get("activity_daily_records") or []
 
     for record in daily_records:
         record_date = record.get("activity_record_date", {})
