@@ -158,9 +158,7 @@ export default function DriverDetailPage() {
             const { count } = await supabase
               .from('infractions')
               .select('*', { count: 'exact', head: true })
-              .eq('driver_id', id)
-              .gte('date', a.period_start)
-              .lte('date', a.period_end)
+              .eq('analysis_id', a.id)
 
             return {
               ...a,
@@ -501,16 +499,13 @@ export default function DriverDetailPage() {
                                   <p className="text-sm font-medium text-foreground">{analysis.period}</p>
                                   <p className="text-xs text-muted-foreground">{analysis.date}</p>
                                 </div>
-                                <div className="flex items-center gap-4">
-                                  <div className="text-right">
-                                    <p className={cn(
-                                      "font-mono text-sm font-semibold",
-                                      analysis.score >= 80 ? "text-success" : analysis.score >= 60 ? "text-warning" : "text-danger"
-                                    )}>
-                                      {analysis.score}/100
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">{analysis.infractions} infraction{analysis.infractions > 1 ? 's' : ''}</p>
-                                  </div>
+                                <div className="flex items-center gap-3">
+                                  <p className={cn(
+                                    "font-mono text-sm font-semibold",
+                                    analysis.score >= 80 ? "text-success" : analysis.score >= 60 ? "text-warning" : "text-danger"
+                                  )}>
+                                    {analysis.score}/100
+                                  </p>
                                   <Link href={`/analyses/${analysis.id}`}>
                                     <Button variant="ghost" size="icon" className="h-8 w-8">
                                       <Eye className="h-4 w-4" />
