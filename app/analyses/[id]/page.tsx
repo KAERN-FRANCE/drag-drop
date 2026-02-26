@@ -1,9 +1,7 @@
 "use client"
 
-import { ChevronRight, FileDown, AlertTriangle, Loader2 } from "lucide-react"
+import { ChevronRight, FileDown, AlertTriangle } from "lucide-react"
 import { useParams } from "next/navigation"
-import { supabase } from "@/lib/supabase"
-import { getUserCompanyId } from "@/lib/company"
 import { generateAnalysisPDF } from "@/lib/generate-pdf"
 import { useEffect, useState } from "react"
 import Link from "next/link"
@@ -30,30 +28,15 @@ export default function AnalysisDetailPage() {
     if (!id) return
 
     const fetchAnalysis = async () => {
-      const companyId = await getUserCompanyId()
-      let analysisQuery = supabase
-        .from('analyses')
-        .select('*, drivers(name, id)')
-        .eq('id', id)
-      if (companyId) analysisQuery = analysisQuery.eq('company_id', companyId)
-      const { data: analysisData } = await analysisQuery.single()
+      const res = await fetch(`/api/analyses/${id}`, { credentials: 'include' })
+      const data = await res.json()
 
-      if (analysisData) {
+      if (data && !data.error) {
         setAnalysis({
-          ...analysisData,
-          driverName: analysisData.drivers?.name,
-          driverId: analysisData.drivers?.id || analysisData.driver_id,
-          period: `${new Date(analysisData.period_start).toLocaleDateString('fr-FR', { month: 'short' })}-${new Date(analysisData.period_end).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })}`,
+          ...data,
+          period: `${new Date(data.periodStart).toLocaleDateString('fr-FR', { month: 'short' })}-${new Date(data.periodEnd).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })}`,
         })
-
-        const { data: infData } = await supabase
-          .from('infractions')
-          .select('*')
-          .eq('analysis_id', id)
-
-        if (infData) {
-          setInfractions(infData)
-        }
+        setInfractions(data.infractions || [])
       }
       setLoading(false)
     }
@@ -76,12 +59,10 @@ export default function AnalysisDetailPage() {
     )
   }
 
-  // Calcul dynamique du coût potentiel
   let totalCost = 0
-  let criticalCount = 0
   infractions.forEach(inf => {
-    if (inf.severity === 'critical') { totalCost += 1500; criticalCount++ }
-    else if (inf.severity === 'high') { totalCost += 750; criticalCount++ }
+    if (inf.severity === 'critical') totalCost += 1500
+    else if (inf.severity === 'high') totalCost += 750
     else if (inf.severity === 'medium') totalCost += 135
     else totalCost += 90
   })
@@ -93,7 +74,6 @@ export default function AnalysisDetailPage() {
         <DashboardHeader breadcrumb="Analyses" />
         <main className="p-6">
           <div className="mx-auto max-w-7xl space-y-6">
-            {/* Breadcrumb & Actions */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Link href="/analyses" className="hover:text-foreground">
@@ -115,7 +95,7 @@ export default function AnalysisDetailPage() {
                       driverName: analysis.driverName || "Inconnu",
                       period: analysis.period,
                       score: analysis.score,
-                      uploadDate: new Date(analysis.upload_date).toLocaleDateString("fr-FR"),
+                      uploadDate: new Date(analysis.uploadDate).toLocaleDateString("fr-FR"),
                       infractions: infractions.map(inf => ({
                         date: inf.date,
                         type: inf.type,
@@ -130,7 +110,6 @@ export default function AnalysisDetailPage() {
               </div>
             </div>
 
-            {/* Alert - dynamique */}
             {infractions.length > 0 && (
               <Alert className="border-warning bg-warning/10">
                 <AlertTriangle className="h-4 w-4 text-warning" />
@@ -141,7 +120,6 @@ export default function AnalysisDetailPage() {
               </Alert>
             )}
 
-            {/* Summary Cards */}
             <AnalysisSummary
               score={analysis.score}
               infractions={infractions.length}
@@ -149,7 +127,6 @@ export default function AnalysisDetailPage() {
               cost={totalCost}
             />
 
-            {/* Tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList>
                 <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>

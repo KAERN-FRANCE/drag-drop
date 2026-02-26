@@ -1,49 +1,44 @@
+/**
+ * DELETE /api/delete-analysis — supprime une analyse + ses infractions, recalcule le score
+ * Remplace l'ancienne version Supabase admin.
+ */
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-function getSupabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
+import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { analyses, infractions, drivers } from '@/lib/schema'
+import { eq, and, gte } from 'drizzle-orm'
 
 const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
 
-function calculateScore(infractions: { severity: string }[]): number {
-  let score = 100
-  infractions.forEach(inf => {
-    score -= penalites[inf.severity] || 5
-  })
-  return Math.max(0, Math.min(100, score))
-}
-
 export async function DELETE(request: NextRequest) {
-  try {
-    const supabaseAdmin = getSupabaseAdmin()
-    const { analysisId } = await request.json()
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
+  try {
+    const { analysisId } = await request.json()
     if (!analysisId) {
       return NextResponse.json({ error: 'ID analyse manquant' }, { status: 400 })
     }
 
-    // Récupérer le driver_id de l'analyse avant suppression
-    const { data: analysis } = await supabaseAdmin
-      .from('analyses')
-      .select('driver_id')
-      .eq('id', analysisId)
-      .single()
+    const id = Number(analysisId)
 
-    const driverId = analysis?.driver_id
+    // Récupérer le driver_id avant suppression
+    const [analysis] = await db
+      .select({ driverId: analyses.driverId })
+      .from(analyses)
+      .where(eq(analyses.id, id))
+      .limit(1)
+
+    const driverId = analysis?.driverId
 
     // Supprimer les infractions liées
-    await supabaseAdmin.from('infractions').delete().eq('analysis_id', analysisId)
+    await db.delete(infractions).where(eq(infractions.analysisId, id))
 
     // Supprimer l'analyse
-    const { error } = await supabaseAdmin.from('analyses').delete().eq('id', analysisId)
+    const { rowCount } = await db.delete(analyses).where(eq(analyses.id, id))
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!rowCount) {
+      return NextResponse.json({ error: 'Analyse non trouvée' }, { status: 404 })
     }
 
     // Recalculer le score du chauffeur sur les 12 derniers mois
@@ -52,22 +47,21 @@ export async function DELETE(request: NextRequest) {
       dateLimit.setMonth(dateLimit.getMonth() - 12)
       const dateLimitStr = dateLimit.toISOString().split('T')[0]
 
-      const { data: remainingInfractions } = await supabaseAdmin
-        .from('infractions')
-        .select('severity')
-        .eq('driver_id', driverId)
-        .gte('date', dateLimitStr)
+      const remaining = await db
+        .select({ severity: infractions.severity })
+        .from(infractions)
+        .where(and(eq(infractions.driverId, driverId), gte(infractions.date, dateLimitStr)))
 
-      const newScore = calculateScore(remainingInfractions || [])
+      let newScore = 100
+      remaining.forEach((inf) => { newScore -= penalites[inf.severity] || 5 })
+      newScore = Math.max(0, Math.min(100, newScore))
 
-      await supabaseAdmin
-        .from('drivers')
-        .update({ score: newScore })
-        .eq('id', driverId)
+      await db.update(drivers).set({ score: newScore }).where(eq(drivers.id, driverId))
     }
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || 'Erreur interne' }, { status: 500 })
+    console.error('Erreur delete-analysis:', error)
+    return NextResponse.json({ error: error.message || 'Erreur interne' }, { status: 500 })
   }
 }

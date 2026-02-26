@@ -116,4 +116,12 @@ export const REGLES_INFRACTIONS: RegleInfraction[] = [
         gravite_defaut: '4eme',
         article_loi: 'Art. R. 3312-6',
     },
+    {
+        code: 'PAUSE_4H30',
+        label: 'Pause manquante après 4h30 de conduite',
+        description: 'Après 4h30 de conduite cumulée, une pause de 45 min minimum est obligatoire (fractionnée : 15 min + 30 min)',
+        limite: 4.5,
+        gravite_defaut: '4eme',
+        article_loi: 'Art. 7 CE 561/2006',
+    },
 ];

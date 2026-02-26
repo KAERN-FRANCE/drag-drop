@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { supabase } from "@/lib/supabase"
+import { authClient } from "@/lib/auth-client"
 import {
   Truck,
   LayoutDashboard,
@@ -39,38 +39,12 @@ export function DriverSidebar() {
   useEffect(() => {
     const fetchDriverData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
+        const res = await fetch('/api/chauffeur/me', { credentials: 'include' })
+        const data = await res.json()
 
-        if (!user) {
-          setLoading(false)
-          return
-        }
-
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
-
-        if (driverData) {
-          // Calculer le score dynamiquement sur les 3 derniers mois
-          const threeMonthsAgo = new Date()
-          threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
-          const dateLimit = threeMonthsAgo.toISOString().split('T')[0]
-
-          const { data: infData } = await supabase
-            .from('infractions')
-            .select('severity')
-            .eq('driver_id', driverData.id)
-            .gte('date', dateLimit)
-
-          const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
-          let score = 100
-          ;(infData || []).forEach((inf: any) => { score -= penalites[inf.severity] || 1 })
-          score = Math.max(0, Math.min(100, score))
-
-          setDriver({ ...driverData, score })
-          setInfractionsCount(infData?.length || 0)
+        if (data.driver) {
+          setDriver({ ...data.driver, score: data.stats?.score ?? data.driver.score ?? 100 })
+          setInfractionsCount(data.stats?.infractions3m ?? (data.infractions?.length || 0))
         }
       } catch (error) {
         console.error('Error loading sidebar data:', error)
@@ -83,7 +57,7 @@ export function DriverSidebar() {
   }, [])
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
+    await authClient.signOut()
     localStorage.removeItem("auth_token")
     localStorage.removeItem("user_type")
     router.push("/login")

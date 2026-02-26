@@ -8,16 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DriverHeader } from "@/components/driver/driver-header"
 import { ScoreGauge } from "@/components/analysis/score-gauge"
-import { GravityBadge } from "@/components/analysis/gravity-badge"
 import { generateAnalysisPDF } from "@/lib/generate-pdf"
 import { Calendar, Download, Eye, ChevronRight, Loader2, AlertTriangle, FileText } from "lucide-react"
-import { supabase } from "@/lib/supabase"
-
-const severityToGravity = (severity: string): "3eme" | "4eme" | "5eme" => {
-  if (severity === 'critical') return '5eme'
-  if (severity === 'high') return '4eme'
-  return '3eme'
-}
 
 export default function DriverAnalysesPage() {
   const router = useRouter()
@@ -28,48 +20,35 @@ export default function DriverAnalysesPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.push('/login'); return }
+        const meRes = await fetch('/api/chauffeur/me', { credentials: 'include' })
+        const meData = await meRes.json()
 
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
-
-        if (!driverData) { setLoading(false); return }
-        setDriver(driverData)
-
-        const { data: analysesData } = await supabase
-          .from('analyses')
-          .select('*')
-          .eq('driver_id', driverData.id)
-          .order('period_end', { ascending: false })
-
-        if (analysesData) {
-          const withInfractions = await Promise.all(
-            analysesData.map(async (a) => {
-              const { data: infData } = await supabase
-                .from('infractions')
-                .select('id, severity, type, date')
-                .eq('analysis_id', a.id)
-
-              const infractions = infData || []
-              return {
-                ...a,
-                period: `${new Date(a.period_start).toLocaleDateString('fr-FR')} - ${new Date(a.period_end).toLocaleDateString('fr-FR')}`,
-                date: new Date(a.created_at || a.upload_date).toLocaleDateString('fr-FR'),
-                infractions,
-                infractionCount: infractions.length,
-                severityCounts: {
-                  serious: infractions.filter(i => i.severity === 'critical' || i.severity === 'high').length,
-                  minor: infractions.filter(i => i.severity === 'medium' || i.severity === 'low').length,
-                },
-              }
-            })
-          )
-          setAnalyses(withInfractions)
+        if (!meData.driver) {
+          if (meRes.status === 401) router.push('/login')
+          setLoading(false)
+          return
         }
+
+        setDriver(meData.driver)
+
+        // Fetch full analyses for this driver (includes infractions severity)
+        const analysesRes = await fetch(`/api/analyses?driverId=${meData.driver.id}`, { credentials: 'include' })
+        const analysesData = await analysesRes.json()
+        const list: any[] = analysesData.analyses || []
+
+        setAnalyses(list.map((a: any) => {
+          const infrList = a.infractions || []
+          return {
+            ...a,
+            period: `${new Date(a.periodStart).toLocaleDateString('fr-FR')} - ${new Date(a.periodEnd).toLocaleDateString('fr-FR')}`,
+            date: new Date(a.uploadDate).toLocaleDateString('fr-FR'),
+            infractionCount: infrList.length,
+            severityCounts: {
+              serious: infrList.filter((i: any) => i.severity === 'critical' || i.severity === 'high').length,
+              minor: infrList.filter((i: any) => i.severity === 'medium' || i.severity === 'low').length,
+            },
+          }
+        }))
       } catch (error) {
         console.error('Error loading analyses:', error)
       } finally {
@@ -88,7 +67,7 @@ export default function DriverAnalysesPage() {
   }
 
   const totalAnalyses = analyses.length
-  const avgScore = totalAnalyses > 0 ? Math.round(analyses.reduce((s, a) => s + a.score, 0) / totalAnalyses) : 0
+  const avgScore = totalAnalyses > 0 ? Math.round(analyses.reduce((s, a) => s + (a.score || 0), 0) / totalAnalyses) : 0
   const totalInfractions = analyses.reduce((s, a) => s + a.infractionCount, 0)
 
   return (
@@ -178,13 +157,15 @@ export default function DriverAnalysesPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
+                        onClick={async () => {
+                          const infRes = await fetch(`/api/infractions?analysisId=${analysis.id}`, { credentials: 'include' })
+                          const infData = await infRes.json()
                           generateAnalysisPDF({
                             driverName: driver?.name || "Inconnu",
                             period: analysis.period,
                             score: analysis.score,
                             uploadDate: analysis.date,
-                            infractions: analysis.infractions.map((inf: any) => ({
+                            infractions: (infData || []).map((inf: any) => ({
                               date: inf.date,
                               type: inf.type,
                               severity: inf.severity,

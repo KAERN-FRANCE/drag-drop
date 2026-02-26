@@ -12,12 +12,11 @@ import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, CloudUpload, File, X, Loader2, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabase"
-import { getUserCompanyId } from "@/lib/company"
 import { parseFile, validateFileFormat } from "@/lib/file-parser"
 import { extraireDonneesAnalyse, detecterInfractions, calculerScoreConformite } from "@/lib/analyse-infractions"
 import { corrigerAnneesInfractions } from "@/lib/date-corrections"
 import { isC1BFile, convertC1BToLigneRaw, C1BParseResponse } from "@/lib/c1b-transformer"
+import { detecterInfractionsC1BRaw } from "@/lib/c1b-infractions"
 
 type UploadState = "idle" | "selected" | "uploading" | "analyzing" | "complete" | "error"
 
@@ -121,15 +120,13 @@ export default function UploadPage() {
   const [analysisId, setAnalysisId] = useState<number | null>(null)
   const [c1bDriverName, setC1bDriverName] = useState<string | null>(null)
 
-  // Fetch drivers from Supabase (filtered by company)
+  // Fetch drivers depuis l'API Railway
   useEffect(() => {
     const fetchDrivers = async () => {
-      const companyId = await getUserCompanyId()
-      let query = supabase.from('drivers').select('id, name').order('name')
-      if (companyId) query = query.eq('company_id', companyId)
-      const { data } = await query
-      if (data) {
-        setDrivers(data)
+      const res = await fetch('/api/drivers', { credentials: 'include' })
+      if (res.ok) {
+        const json = await res.json()
+        setDrivers(json.drivers || [])
       }
     }
     fetchDrivers()
@@ -183,12 +180,11 @@ export default function UploadPage() {
       setUploadState("uploading")
       setUploadProgress(0)
 
-      const companyId = await getUserCompanyId()
-
       console.log("📄 Début du parsing du fichier:", file.name)
       setUploadProgress(10)
 
       let lignesRaw
+      let c1bDriverResult: any = null
       const fileIsC1B = isC1BFile(file.name)
 
       if (fileIsC1B) {
@@ -217,6 +213,7 @@ export default function UploadPage() {
 
         // Prendre le premier conducteur
         const driverResult = c1bData.results[0]
+        c1bDriverResult = driverResult
         setC1bDriverName(driverResult.driver_name)
 
         // Transformer les activités en LigneRaw
@@ -255,15 +252,22 @@ export default function UploadPage() {
       }
 
       try {
-        infractions = detecterInfractions(journees, semaines)
-        console.log("✅ Détection:", infractions.length, "infractions")
+        if (fileIsC1B && c1bDriverResult) {
+          // Pour les fichiers C1B : utiliser les timestamps exacts (plus précis)
+          // Détecte aussi la pause 4h30 et les repos continus
+          infractions = detecterInfractionsC1BRaw(c1bDriverResult.activities)
+          console.log("✅ Détection C1B (timestamps):", infractions.length, "infractions")
+        } else {
+          infractions = detecterInfractions(journees, semaines)
+          console.log("✅ Détection Excel/CSV:", infractions.length, "infractions")
 
-        // Corriger les années si nécessaire (transition d'année)
-        const infractionsCorrigees = corrigerAnneesInfractions(infractions)
-        const nbCorrections = infractionsCorrigees.filter((inf, i) => inf.date !== infractions[i]?.date).length
-        if (nbCorrections > 0) {
-          console.log("🔧 Correction automatique de", nbCorrections, "dates (transition d'année)")
-          infractions = infractionsCorrigees
+          // Corriger les années si nécessaire (transition d'année)
+          const infractionsCorrigees = corrigerAnneesInfractions(infractions)
+          const nbCorrections = infractionsCorrigees.filter((inf, i) => inf.date !== infractions[i]?.date).length
+          if (nbCorrections > 0) {
+            console.log("🔧 Correction automatique de", nbCorrections, "dates (transition d'année)")
+            infractions = infractionsCorrigees
+          }
         }
       } catch (detectError: any) {
         console.error("❌ Erreur de détection:", detectError)
@@ -280,116 +284,60 @@ export default function UploadPage() {
 
       setUploadProgress(70)
 
-      // Étape 3: Stocker dans Supabase
-      console.log("💾 Début du stockage dans Supabase")
+      // Étape 3: Stocker dans Railway via /api/analyses
+      console.log("💾 Début du stockage dans Railway")
 
-      // 3.1: Créer l'analyse
-      const firstJournee = journees[0]
-      const lastJournee = journees[journees.length - 1]
+      // Calculer la période
+      let periodStart: string
+      let periodEnd: string
 
-      // Convertir les dates du format français vers un format ISO
-      const periodStart = parseFrenchDate(firstJournee?.date || '')
-      const periodEnd = parseFrenchDate(lastJournee?.date || '')
+      if (fileIsC1B && c1bDriverResult) {
+        const drivingDates = (c1bDriverResult.activities || [])
+          .filter((a: any) => a.type === 'DRIVING' || a.type === 'WORK')
+          .map((a: any) => a.start.split('T')[0])
+          .sort()
+        periodStart = drivingDates[0] || parseFrenchDate(journees[0]?.date || '')
+        periodEnd = drivingDates[drivingDates.length - 1] || parseFrenchDate(journees[journees.length - 1]?.date || '')
+      } else {
+        periodStart = parseFrenchDate(journees[0]?.date || '')
+        periodEnd = parseFrenchDate(journees[journees.length - 1]?.date || '')
+      }
 
       console.log("📅 Période:", periodStart, "->", periodEnd)
 
-      let analysisData
-      try {
-        const { data, error: analysisError } = await supabase
-          .from('analyses')
-          .insert({
-            driver_id: parseInt(selectedDriver),
-            company_id: companyId ? parseInt(companyId) : null,
-            period_start: periodStart,
-            period_end: periodEnd,
-            score: score,
-            status: 'completed'
-          })
-          .select()
-          .single()
-
-        if (analysisError) {
-          console.error("❌ Erreur Supabase (analyse):", analysisError)
-          throw new Error(`Erreur base de données: ${analysisError.message}`)
-        }
-
-        analysisData = data
-        console.log("✅ Analyse créée, ID:", analysisData.id)
-      } catch (dbError: any) {
-        console.error("❌ Erreur lors de la création de l'analyse:", dbError)
-        throw new Error(`Erreur de création d'analyse: ${dbError.message}`)
-      }
-
       setUploadProgress(85)
 
-      // 3.2: Insérer les infractions
-      if (infractions.length > 0) {
-        console.log("📝 Insertion de", infractions.length, "infractions")
+      // Appel unique à /api/analyses (crée analyse + infractions + recalcule score)
+      const infractionsData = infractions.map(inf => ({
+        type: inf.type,
+        date: fileIsC1B ? inf.date : parseFrenchDate(inf.date),
+        severity: inf.gravite === 'delit' ? 'critical' : inf.gravite === '5eme' ? 'high' : inf.gravite === '4eme' ? 'medium' : 'low'
+      }))
 
-        try {
-          const infractionsToInsert = infractions.map(inf => ({
-            driver_id: parseInt(selectedDriver),
-            company_id: companyId ? parseInt(companyId) : null,
-            analysis_id: analysisData.id,
-            date: parseFrenchDate(inf.date),
-            type: inf.type,
-            severity: inf.gravite === 'delit' ? 'critical' : inf.gravite === '5eme' ? 'high' : inf.gravite === '4eme' ? 'medium' : 'low'
-          }))
+      const saveRes = await fetch('/api/analyses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          driverId: parseInt(selectedDriver),
+          periodStart,
+          periodEnd,
+          score,
+          infractionsData,
+        }),
+      })
 
-          const { error: infractionsError } = await supabase
-            .from('infractions')
-            .insert(infractionsToInsert)
-
-          if (infractionsError) {
-            console.error("❌ Erreur Supabase (infractions):", infractionsError)
-            throw new Error(`Erreur d'insertion des infractions: ${infractionsError.message}`)
-          }
-
-          console.log("✅ Infractions insérées")
-        } catch (infError: any) {
-          console.error("❌ Erreur lors de l'insertion des infractions:", infError)
-          throw new Error(`Erreur d'insertion: ${infError.message}`)
-        }
+      if (!saveRes.ok) {
+        const errData = await saveRes.json().catch(() => ({ error: 'Erreur inconnue' }))
+        throw new Error(errData.error || `Erreur de sauvegarde (${saveRes.status})`)
       }
 
-      setUploadProgress(95)
+      const saveData = await saveRes.json()
+      const analysisId = saveData.analysisId
+      score = saveData.driverScore ?? score
 
-      // 3.3: Recalculer le score du chauffeur sur les 12 derniers mois
-      try {
-        const dateLimit12m = new Date()
-        dateLimit12m.setMonth(dateLimit12m.getMonth() - 12)
-        const dateLimitStr = dateLimit12m.toISOString().split('T')[0]
-
-        const { data: allInfractions12m } = await supabase
-          .from('infractions')
-          .select('severity')
-          .eq('driver_id', parseInt(selectedDriver))
-          .gte('date', dateLimitStr)
-
-        const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
-        let globalScore = 100
-        ;(allInfractions12m || []).forEach((inf: any) => {
-          globalScore -= penalites[inf.severity] || 5
-        })
-        globalScore = Math.max(0, Math.min(100, globalScore))
-
-        const { error: updateError } = await supabase
-          .from('drivers')
-          .update({ score: globalScore })
-          .eq('id', parseInt(selectedDriver))
-
-        if (updateError) {
-          console.error("❌ Erreur Supabase (update driver):", updateError)
-          throw new Error(`Erreur de mise à jour du score: ${updateError.message}`)
-        }
-
-        // Mettre à jour le score affiché avec le score global
-        score = globalScore
-        console.log("✅ Score du chauffeur recalculé (12 mois):", globalScore)
-      } catch (updateErr: any) {
-        console.error("❌ Erreur lors de la mise à jour du chauffeur:", updateErr)
-        throw new Error(`Erreur de mise à jour: ${updateErr.message}`)
-      }
+      console.log("✅ Analyse sauvegardée, ID:", analysisId, "| Score chauffeur:", score)
+      setAnalysisId(analysisId)
 
       setUploadProgress(100)
 
@@ -399,7 +347,6 @@ export default function UploadPage() {
         infractions: infractions.length,
         period: `${periodStart} - ${periodEnd}`
       })
-      setAnalysisId(analysisData.id)
 
       console.log("🎉 Analyse terminée avec succès!")
       setUploadState("complete")

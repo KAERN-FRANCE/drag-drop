@@ -29,7 +29,6 @@ import {
   ArrowUpRight,
 } from "lucide-react"
 import Link from "next/link"
-import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 
@@ -39,8 +38,6 @@ const severityToGravity = (severity: string): "3eme" | "4eme" | "5eme" | "delit"
   if (severity === 'medium') return '3eme'
   return '3eme'
 }
-
-const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
 
 const tooltipStyle = {
   backgroundColor: "rgba(15, 23, 42, 0.95)",
@@ -67,59 +64,38 @@ export default function DriverDashboardPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.push('/login'); return }
+        const res = await fetch('/api/chauffeur/me', { credentials: 'include' })
+        const data = await res.json()
 
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
-
-        if (!driverData) { setLoading(false); return }
-        setDriver(driverData)
-
-        const threeMonthsAgo = new Date()
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
-        const dateLimit = threeMonthsAgo.toISOString().split('T')[0]
-
-        const { data: infData } = await supabase
-          .from('infractions')
-          .select('*')
-          .eq('driver_id', driverData.id)
-          .gte('date', dateLimit)
-          .order('date', { ascending: false })
-
-        if (infData) {
-          setInfractions(infData)
-
-          let calcScore = 100
-          infData.forEach(inf => { calcScore -= penalites[inf.severity] || 1 })
-          calcScore = Math.max(0, Math.min(100, calcScore))
-          setScore(calcScore)
-
-          let daysWithout = 0
-          if (infData.length > 0) {
-            const lastDate = new Date(infData[0].date)
-            daysWithout = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24))
-          }
-
-          setStats({
-            daysWithoutInfraction: daysWithout,
-            infractions3m: infData.length,
-            totalInfractions: infData.length,
-          })
+        if (!data.driver) {
+          if (res.status === 401) router.push('/login')
+          setLoading(false)
+          return
         }
 
-        const { data: analysesData } = await supabase
-          .from('analyses')
-          .select('score, period_end')
-          .eq('driver_id', driverData.id)
-          .order('period_end', { ascending: true })
+        const driverData = data.driver
+        const infData: any[] = data.infractions || []
+        const analysesData: any[] = data.analyses || []
 
-        if (analysesData && analysesData.length > 0) {
-          setEvolutionData(analysesData.map(a => ({
-            month: new Date(a.period_end).toLocaleDateString('fr-FR', { month: 'short' }),
+        setDriver(driverData)
+        setInfractions(infData)
+        setScore(data.stats?.score ?? driverData.score ?? 100)
+
+        let daysWithout = 0
+        if (infData.length > 0) {
+          const lastDate = new Date(infData[0].date)
+          daysWithout = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24))
+        }
+
+        setStats({
+          daysWithoutInfraction: daysWithout,
+          infractions3m: infData.length,
+          totalInfractions: infData.length,
+        })
+
+        if (analysesData.length > 0) {
+          setEvolutionData(analysesData.map((a: any) => ({
+            month: new Date(a.periodEnd).toLocaleDateString('fr-FR', { month: 'short' }),
             score: a.score,
           })))
         }

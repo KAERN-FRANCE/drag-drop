@@ -18,12 +18,13 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Lock, Trash2, AlertTriangle, Loader2, CheckCircle, Eye, EyeOff } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { authClient } from "@/lib/auth-client"
 
 export default function DriverSettingsPage() {
     const router = useRouter()
 
     // Password change states
+    const [currentPassword, setCurrentPassword] = useState("")
     const [newPassword, setNewPassword] = useState("")
     const [confirmPassword, setConfirmPassword] = useState("")
     const [showPassword, setShowPassword] = useState(false)
@@ -40,7 +41,11 @@ export default function DriverSettingsPage() {
         setPasswordError("")
         setPasswordSuccess(false)
 
-        // Validation
+        if (!currentPassword) {
+            setPasswordError("Veuillez saisir votre mot de passe actuel")
+            return
+        }
+
         if (newPassword.length < 6) {
             setPasswordError("Le mot de passe doit contenir au moins 6 caractères")
             return
@@ -54,14 +59,17 @@ export default function DriverSettingsPage() {
         setChangingPassword(true)
 
         try {
-            const { error } = await supabase.auth.updateUser({
-                password: newPassword
+            const result = await authClient.changePassword({
+                currentPassword,
+                newPassword,
+                revokeOtherSessions: false,
             })
 
-            if (error) {
-                setPasswordError(error.message)
+            if (result.error) {
+                setPasswordError(result.error.message || "Une erreur est survenue")
             } else {
                 setPasswordSuccess(true)
+                setCurrentPassword("")
                 setNewPassword("")
                 setConfirmPassword("")
                 setTimeout(() => setPasswordSuccess(false), 5000)
@@ -84,29 +92,9 @@ export default function DriverSettingsPage() {
         setDeleteError("")
 
         try {
-            const { data: { user } } = await supabase.auth.getUser()
-
-            if (!user) {
-                router.push('/login')
-                return
-            }
-
-            const { data: driverData } = await supabase
-                .from('drivers')
-                .select('id')
-                .eq('user_id', user.id)
-                .single()
-
-            if (driverData) {
-                await supabase.from('infractions').delete().eq('driver_id', driverData.id)
-                await supabase.from('analyses').delete().eq('driver_id', driverData.id)
-                await supabase.from('drivers').delete().eq('id', driverData.id)
-            }
-
-            await supabase.auth.signOut()
+            await authClient.signOut()
             localStorage.clear()
             router.push('/')
-
         } catch (error) {
             console.error('Error deleting account:', error)
             setDeleteError("Une erreur est survenue lors de la suppression")
@@ -133,6 +121,17 @@ export default function DriverSettingsPage() {
                         <CardDescription>Changez votre mot de passe de connexion</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="currentPassword">Mot de passe actuel</Label>
+                            <Input
+                                id="currentPassword"
+                                type={showPassword ? "text" : "password"}
+                                value={currentPassword}
+                                onChange={(e) => setCurrentPassword(e.target.value)}
+                                placeholder="••••••••"
+                            />
+                        </div>
+
                         <div className="space-y-2">
                             <Label htmlFor="newPassword">Nouveau mot de passe</Label>
                             <div className="relative">
@@ -188,7 +187,7 @@ export default function DriverSettingsPage() {
 
                         <Button
                             onClick={handlePasswordChange}
-                            disabled={changingPassword || !newPassword || !confirmPassword}
+                            disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
                         >
                             {changingPassword ? (
                                 <>

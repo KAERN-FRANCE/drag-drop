@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { User, Bell, Shield, Camera, Loader2, CheckCircle, AlertTriangle, Eye, EyeOff, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabase"
+import { authClient } from "@/lib/auth-client"
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -36,13 +36,12 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const [userEmail, setUserEmail] = useState("")
 
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
     email: "",
-    phone: "",
   })
 
   const [notifications, setNotifications] = useState({
@@ -53,6 +52,7 @@ export default function AccountPage() {
   })
 
   // Password change states
+  const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -68,26 +68,21 @@ export default function AccountPage() {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const { data: { user: authUser } } = await supabase.auth.getUser()
+        const res = await fetch('/api/me', { credentials: 'include' })
+        const data = await res.json()
 
-        if (!authUser) {
+        if (!data.user) {
           router.push('/login')
           return
         }
 
-        setUser(authUser)
-
-        // Try to parse name from email or user metadata
-        const email = authUser.email || ''
-        const metadata = authUser.user_metadata || {}
-        const fullName = metadata.full_name || metadata.name || ''
+        const fullName = data.user.name || ''
         const nameParts = fullName.split(' ')
-
+        setUserEmail(data.user.email || '')
         setFormData({
           firstName: nameParts[0] || '',
           lastName: nameParts.slice(1).join(' ') || '',
-          email: email,
-          phone: metadata.phone || '',
+          email: data.user.email || '',
         })
       } catch (error) {
         console.error('Error fetching user:', error)
@@ -104,16 +99,16 @@ export default function AccountPage() {
     setSaved(false)
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          full_name: `${formData.firstName} ${formData.lastName}`.trim(),
-          phone: formData.phone,
-        }
+      const res = await fetch('/api/account', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: `${formData.firstName} ${formData.lastName}`.trim(),
+        }),
       })
 
-      if (error) {
-        console.error('Error saving profile:', error)
-      } else {
+      if (res.ok) {
         setSaved(true)
         setTimeout(() => setSaved(false), 3000)
       }
@@ -128,8 +123,13 @@ export default function AccountPage() {
     setPasswordError("")
     setPasswordSuccess(false)
 
+    if (!currentPassword) {
+      setPasswordError("Veuillez saisir votre mot de passe actuel")
+      return
+    }
+
     if (newPassword.length < 6) {
-      setPasswordError("Le mot de passe doit contenir au moins 6 caractères")
+      setPasswordError("Le nouveau mot de passe doit contenir au moins 6 caractères")
       return
     }
 
@@ -141,14 +141,17 @@ export default function AccountPage() {
     setChangingPassword(true)
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword
+      const result = await authClient.changePassword({
+        currentPassword,
+        newPassword,
+        revokeOtherSessions: false,
       })
 
-      if (error) {
-        setPasswordError(error.message)
+      if (result.error) {
+        setPasswordError(result.error.message || "Une erreur est survenue")
       } else {
         setPasswordSuccess(true)
+        setCurrentPassword("")
         setNewPassword("")
         setConfirmPassword("")
         setTimeout(() => setPasswordSuccess(false), 5000)
@@ -171,7 +174,7 @@ export default function AccountPage() {
     setDeleteError("")
 
     try {
-      await supabase.auth.signOut()
+      await authClient.signOut()
       localStorage.clear()
       router.push('/')
     } catch (error) {
@@ -185,7 +188,7 @@ export default function AccountPage() {
   const getInitials = () => {
     const first = formData.firstName?.[0] || ''
     const last = formData.lastName?.[0] || ''
-    return (first + last).toUpperCase() || user?.email?.[0]?.toUpperCase() || '?'
+    return (first + last).toUpperCase() || userEmail?.[0]?.toUpperCase() || '?'
   }
 
   if (loading) {
@@ -235,7 +238,6 @@ export default function AccountPage() {
                       <CardDescription>Gérez vos informations de profil</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                      {/* Avatar */}
                       <div className="flex items-center gap-4">
                         <div className="relative">
                           <Avatar className="h-20 w-20">
@@ -249,7 +251,7 @@ export default function AccountPage() {
                         </div>
                         <div>
                           <p className="font-medium text-foreground">
-                            {formData.firstName} {formData.lastName || user?.email}
+                            {formData.firstName} {formData.lastName || userEmail}
                           </p>
                           <p className="text-sm text-muted-foreground">RH Admin</p>
                         </div>
@@ -284,16 +286,6 @@ export default function AccountPage() {
                           className="bg-muted"
                         />
                         <p className="text-xs text-muted-foreground">L'email ne peut pas être modifié</p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="phone">Téléphone</Label>
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={formData.phone}
-                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        />
                       </div>
 
                       <Button onClick={handleSaveProfile} disabled={saving}>
@@ -383,6 +375,20 @@ export default function AccountPage() {
                       </CardHeader>
                       <CardContent className="space-y-4">
                         <div className="space-y-2">
+                          <Label htmlFor="currentPassword">Mot de passe actuel</Label>
+                          <div className="relative">
+                            <Input
+                              id="currentPassword"
+                              type={showPassword ? "text" : "password"}
+                              value={currentPassword}
+                              onChange={(e) => setCurrentPassword(e.target.value)}
+                              placeholder="••••••••"
+                              className="pr-10"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
                           <Label htmlFor="newPassword">Nouveau mot de passe</Label>
                           <div className="relative">
                             <Input
@@ -437,7 +443,7 @@ export default function AccountPage() {
 
                         <Button
                           onClick={handlePasswordChange}
-                          disabled={changingPassword || !newPassword || !confirmPassword}
+                          disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
                         >
                           {changingPassword ? (
                             <>

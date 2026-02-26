@@ -5,8 +5,6 @@ import type React from "react"
 import { ShieldCheck, AlertTriangle, UserX, Euro, Loader2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabase"
-import { getUserCompanyId } from "@/lib/company"
 import { useEffect, useState } from "react"
 
 interface KPICardProps {
@@ -61,59 +59,46 @@ export function KPICards() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const companyId = await getUserCompanyId()
+        const dateLimit = new Date()
+        dateLimit.setMonth(dateLimit.getMonth() - 12)
+        const dateLimitStr = dateLimit.toISOString().split('T')[0]
 
-        // Période réglementaire : 12 derniers mois (contrôle en entreprise - CE 561/2006)
-        const twelveMonthsAgo = new Date()
-        twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12)
-        const dateLimit = twelveMonthsAgo.toISOString().split('T')[0]
+        const [driversRes, infractionsRes] = await Promise.all([
+          fetch('/api/drivers', { credentials: 'include' }),
+          fetch(`/api/infractions?dateFrom=${dateLimitStr}`, { credentials: 'include' }),
+        ])
 
-        // Récupérer les chauffeurs
-        let driversQuery = supabase.from('drivers').select('id, name')
-        if (companyId) driversQuery = driversQuery.eq('company_id', companyId)
-        const { data: drivers } = await driversQuery
+        const driversData = await driversRes.json()
+        const infList: any[] = await infractionsRes.json()
 
-        // Récupérer les infractions des 12 derniers mois avec driver_id et severity
-        let infractionsQuery = supabase.from('infractions').select('driver_id, severity').gte('date', dateLimit)
-        if (companyId) infractionsQuery = infractionsQuery.eq('company_id', companyId)
-        const { data: infractions } = await infractionsQuery
+        const driversList: any[] = driversData.drivers || []
 
-        if (drivers) {
-          const infList = infractions || []
-          const totalInfractions = infList.length
+        const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
+        const driverScores = driversList.map(driver => {
+          const driverInf = infList.filter((inf: any) => inf.driver_id === driver.id)
+          let score = 100
+          driverInf.forEach((inf: any) => { score -= penalites[inf.severity] || 5 })
+          return Math.max(0, Math.min(100, score))
+        })
 
-          // Calculer le score par chauffeur basé sur ses infractions des 12 derniers mois
-          // Pénalités alignées sur l'algo CE 561/2006
-          const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
-          const driverScores = drivers.map(driver => {
-            const driverInf = infList.filter(inf => inf.driver_id === driver.id)
-            let score = 100
-            driverInf.forEach(inf => {
-              score -= penalites[inf.severity] || 5
-            })
-            return Math.max(0, Math.min(100, score))
-          })
+        const avgScore = driverScores.length ? driverScores.reduce((a, b) => a + b, 0) / driverScores.length : 100
+        const riskCount = driverScores.filter(s => s < 70).length
 
-          const avgScore = driverScores.length ? driverScores.reduce((a, b) => a + b, 0) / driverScores.length : 100
-          const riskCount = driverScores.filter(s => s < 70).length
+        let totalFines = 0
+        infList.forEach((inf: any) => {
+          if (inf.severity === 'critical') totalFines += 1500
+          else if (inf.severity === 'high') totalFines += 750
+          else if (inf.severity === 'medium') totalFines += 135
+          else totalFines += 90
+        })
 
-          // Calcul amendes basé sur la sévérité réelle
-          let totalFines = 0
-          infList.forEach(inf => {
-            if (inf.severity === 'critical') totalFines += 1500
-            else if (inf.severity === 'high') totalFines += 750
-            else if (inf.severity === 'medium') totalFines += 135
-            else totalFines += 90
-          })
-
-          setStats({
-            compliance: Math.round(avgScore),
-            infractions: totalInfractions,
-            riskDrivers: riskCount,
-            fines: totalFines,
-            driversCount: drivers.length
-          })
-        }
+        setStats({
+          compliance: Math.round(avgScore),
+          infractions: infList.length,
+          riskDrivers: riskCount,
+          fines: totalFines,
+          driversCount: driversList.length
+        })
       } catch (error) {
         console.error('Error fetching KPI stats:', error)
       } finally {

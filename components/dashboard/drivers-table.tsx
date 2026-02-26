@@ -11,42 +11,15 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabase"
-import { getUserCompanyId } from "@/lib/company"
 import { useEffect } from "react"
 
-interface Driver {
-  id: number
-  name: string
-  initials: string
-  score: number
-  status: string
-  infractions: { count: number }[]
-  created_at: string
-}
-
-
-
 function ScoreGauge({ score }: { score: number }) {
-  const getColor = (s: number) => {
-    if (s >= 90) return "text-success"
-    if (s >= 70) return "text-warning"
-    return "text-danger"
-  }
-
-  const getBackgroundColor = (s: number) => {
-    if (s >= 90) return "bg-success"
-    if (s >= 70) return "bg-warning"
-    return "bg-danger"
-  }
-
+  const getColor  = (s: number) => s >= 90 ? "text-success" : s >= 70 ? "text-warning" : "text-danger"
+  const getBg     = (s: number) => s >= 90 ? "bg-success"  : s >= 70 ? "bg-warning"   : "bg-danger"
   return (
     <div className="flex items-center gap-2">
       <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn("h-full rounded-full transition-all", getBackgroundColor(score))}
-          style={{ width: `${score}%` }}
-        />
+        <div className={cn("h-full rounded-full transition-all", getBg(score))} style={{ width: `${score}%` }} />
       </div>
       <span className={cn("font-mono text-sm font-medium", getColor(score))}>{score}</span>
     </div>
@@ -54,58 +27,48 @@ function ScoreGauge({ score }: { score: number }) {
 }
 
 export function DriversTable() {
-  const [searchQuery, setSearchQuery] = useState("")
-  const [statusFilter, setStatusFilter] = useState("all")
-  const [periodFilter, setPeriodFilter] = useState("month")
-  const [drivers, setDrivers] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [searchQuery,   setSearchQuery]   = useState("")
+  const [statusFilter,  setStatusFilter]  = useState("all")
+  const [periodFilter,  setPeriodFilter]  = useState("month")
+  const [drivers,       setDrivers]       = useState<any[]>([])
+  const [loading,       setLoading]       = useState(true)
 
   useEffect(() => {
     const fetchDrivers = async () => {
-      const companyId = await getUserCompanyId()
+      const dateLimit = new Date()
+      dateLimit.setMonth(dateLimit.getMonth() - 12)
+      const dateLimitStr = dateLimit.toISOString().split('T')[0]
 
-      // Période réglementaire : 12 derniers mois
-      const twelveMonthsAgo = new Date()
-      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12)
-      const dateLimit = twelveMonthsAgo.toISOString().split('T')[0]
+      const [driversRes, infRes] = await Promise.all([
+        fetch('/api/drivers', { credentials: 'include' }),
+        fetch(`/api/infractions?dateFrom=${dateLimitStr}`, { credentials: 'include' }),
+      ])
 
-      let driversQuery = supabase.from("drivers").select("*")
-      if (companyId) driversQuery = driversQuery.eq('company_id', companyId)
-      const { data, error } = await driversQuery
+      const driversData = await driversRes.json()
+      const infList: any[] = await infRes.json()
+      const driversList: any[] = driversData.drivers || []
 
-      if (error) {
-        console.error("Error fetching drivers:", error)
-      } else if (data) {
-        // Récupérer les infractions des 12 derniers mois
-        let infQuery = supabase.from("infractions").select("driver_id, severity").gte('date', dateLimit)
-        if (companyId) infQuery = infQuery.eq('company_id', companyId)
-        const { data: infractions } = await infQuery
-
-        const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
-
-        const formattedDrivers = data.map((driver: any) => {
-          const driverInf = (infractions || []).filter((inf: any) => inf.driver_id === driver.id)
-          let score = 100
-          driverInf.forEach((inf: any) => { score -= penalites[inf.severity] || 5 })
-          score = Math.max(0, Math.min(100, score))
-
-          return {
-            ...driver,
-            score,
-            infractions: driverInf.length,
-            trend: score >= 80 ? "up" : score < 60 ? "down" : "stable",
-            lastAnalysis: new Date(driver.updated_at).toLocaleDateString("fr-FR", { day: 'numeric', month: 'long' }),
-          }
-        })
-        setDrivers(formattedDrivers)
-      }
+      const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
+      const formatted = driversList.map(driver => {
+        const driverInf = infList.filter(inf => inf.driver_id === driver.id)
+        let score = 100
+        driverInf.forEach(inf => { score -= penalites[inf.severity] || 5 })
+        score = Math.max(0, Math.min(100, score))
+        return {
+          ...driver,
+          score,
+          infractions: driverInf.length,
+          trend: score >= 80 ? "up" : score < 60 ? "down" : "stable",
+          lastAnalysis: new Date(driver.updated_at).toLocaleDateString("fr-FR", { day: 'numeric', month: 'long' }),
+        }
+      })
+      setDrivers(formatted)
       setLoading(false)
     }
-
     fetchDrivers()
   }, [])
 
-  const filteredDrivers = drivers.filter((driver) => {
+  const filteredDrivers = drivers.filter(driver => {
     const matchesSearch = driver.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus =
       statusFilter === "all" ||
@@ -117,24 +80,18 @@ export function DriversTable() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-semibold">Vue d'ensemble de la flotte <span className="text-xs font-normal text-muted-foreground">(12 derniers mois)</span></CardTitle>
+        <CardTitle className="text-base font-semibold">
+          Vue d'ensemble de la flotte <span className="text-xs font-normal text-muted-foreground">(12 derniers mois)</span>
+        </CardTitle>
       </CardHeader>
       <CardContent>
-        {/* Filters */}
         <div className="mb-4 flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Rechercher un chauffeur"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
-            />
+            <Input placeholder="Rechercher un chauffeur" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9" />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Statut" />
-            </SelectTrigger>
+            <SelectTrigger className="w-[140px]"><SelectValue placeholder="Statut" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tous</SelectItem>
               <SelectItem value="risk">À risque</SelectItem>
@@ -142,9 +99,7 @@ export function DriversTable() {
             </SelectContent>
           </Select>
           <Select value={periodFilter} onValueChange={setPeriodFilter}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Période" />
-            </SelectTrigger>
+            <SelectTrigger className="w-[160px]"><SelectValue placeholder="Période" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="month">Ce mois</SelectItem>
               <SelectItem value="lastMonth">Mois dernier</SelectItem>
@@ -153,7 +108,6 @@ export function DriversTable() {
           </Select>
         </div>
 
-        {/* Table */}
         <div className="rounded-lg border border-border">
           <Table>
             <TableHeader>
@@ -172,47 +126,32 @@ export function DriversTable() {
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <Avatar className="h-8 w-8">
-                        <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                          {driver.initials}
-                        </AvatarFallback>
+                        <AvatarFallback className="bg-primary/10 text-primary text-xs">{driver.initials}</AvatarFallback>
                       </Avatar>
                       <span className="font-medium">{driver.name}</span>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <ScoreGauge score={driver.score} />
-                  </TableCell>
+                  <TableCell><ScoreGauge score={driver.score} /></TableCell>
                   <TableCell>
                     <Badge variant={driver.infractions > 5 ? "destructive" : "secondary"} className="font-mono">
                       {driver.infractions}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {driver.trend === "up" && <TrendingUp className="h-4 w-4 text-success" />}
-                    {driver.trend === "down" && <TrendingDown className="h-4 w-4 text-danger" />}
+                    {driver.trend === "up"     && <TrendingUp className="h-4 w-4 text-success" />}
+                    {driver.trend === "down"   && <TrendingDown className="h-4 w-4 text-danger" />}
                     {driver.trend === "stable" && <div className="h-0.5 w-4 bg-muted-foreground" />}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{driver.lastAnalysis}</TableCell>
                   <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
-                          <Eye className="mr-2 h-4 w-4" />
-                          Voir détails
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <FileSearch className="mr-2 h-4 w-4" />
-                          Analyses
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Download className="mr-2 h-4 w-4" />
-                          Exporter
-                        </DropdownMenuItem>
+                        <DropdownMenuItem><Eye className="mr-2 h-4 w-4" />Voir détails</DropdownMenuItem>
+                        <DropdownMenuItem><FileSearch className="mr-2 h-4 w-4" />Analyses</DropdownMenuItem>
+                        <DropdownMenuItem><Download className="mr-2 h-4 w-4" />Exporter</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -222,16 +161,11 @@ export function DriversTable() {
           </Table>
         </div>
 
-        {/* Pagination */}
         <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
           <span>{filteredDrivers.length} chauffeurs</span>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled>
-              Précédent
-            </Button>
-            <Button variant="outline" size="sm">
-              Suivant
-            </Button>
+            <Button variant="outline" size="sm" disabled>Précédent</Button>
+            <Button variant="outline" size="sm">Suivant</Button>
           </div>
         </div>
       </CardContent>

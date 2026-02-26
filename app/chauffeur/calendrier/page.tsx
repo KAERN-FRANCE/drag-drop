@@ -9,7 +9,6 @@ import { DriverHeader } from "@/components/driver/driver-header"
 import { GravityBadge } from "@/components/analysis/gravity-badge"
 import { ChevronLeft, ChevronRight, Clock, AlertTriangle, CheckCircle, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabase"
 
 const daysOfWeek = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 const months = [
@@ -41,51 +40,49 @@ export default function DriverCalendarPage() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.push('/login'); return }
+        const meRes = await fetch('/api/chauffeur/me', { credentials: 'include' })
+        if (meRes.status === 401) { router.push('/login'); return }
 
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
+        const meData = await meRes.json()
+        if (!meData.driver) { setLoading(false); return }
+        setDriver(meData.driver)
 
-        if (!driverData) { setLoading(false); return }
-        setDriver(driverData)
-
-        // Get infractions for the current month
+        // Fetch infractions for this driver from start of month
         const startOfMonth = `${year}-${String(month + 1).padStart(2, "0")}-01`
         const endOfMonth = new Date(year, month + 1, 0)
         const endStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(endOfMonth.getDate()).padStart(2, "0")}`
 
-        const { data: infractionsData } = await supabase
-          .from('infractions')
-          .select('*')
-          .eq('driver_id', driverData.id)
-          .gte('date', startOfMonth)
-          .lte('date', endStr)
+        const infRes = await fetch(
+          `/api/infractions?driverId=${meData.driver.id}&dateFrom=${startOfMonth}`,
+          { credentials: 'include' }
+        )
+        const infractionsData: any[] = infRes.ok ? await infRes.json() : []
 
-        if (infractionsData) {
-          const dataByDay: Record<string, {
-            type: "ok" | "infraction"
-            infractions?: { type: string; gravity: "3eme" | "4eme" | "5eme" }[]
-          }> = {}
+        // Filter to current month only (API has no dateTo param)
+        const monthInfractions = infractionsData.filter(inf => {
+          const dateStr = inf.date?.split('T')[0] || inf.date
+          return dateStr >= startOfMonth && dateStr <= endStr
+        })
 
-          infractionsData.forEach(inf => {
-            const dateKey = inf.date?.split('T')[0] || new Date(inf.date).toISOString().split('T')[0]
+        const dataByDay: Record<string, {
+          type: "ok" | "infraction"
+          infractions?: { type: string; gravity: "3eme" | "4eme" | "5eme" }[]
+        }> = {}
 
-            if (!dataByDay[dateKey]) {
-              dataByDay[dateKey] = { type: "infraction", infractions: [] }
-            }
+        monthInfractions.forEach(inf => {
+          const dateKey = inf.date?.split('T')[0] || new Date(inf.date).toISOString().split('T')[0]
 
-            dataByDay[dateKey].infractions!.push({
-              type: inf.type,
-              gravity: severityToGravity(inf.severity)
-            })
+          if (!dataByDay[dateKey]) {
+            dataByDay[dateKey] = { type: "infraction", infractions: [] }
+          }
+
+          dataByDay[dateKey].infractions!.push({
+            type: inf.type,
+            gravity: severityToGravity(inf.severity)
           })
+        })
 
-          setCalendarData(dataByDay)
-        }
+        setCalendarData(dataByDay)
       } catch (error) {
         console.error('Error loading calendar:', error)
       } finally {

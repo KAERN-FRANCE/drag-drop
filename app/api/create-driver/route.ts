@@ -1,26 +1,39 @@
+/**
+ * POST /api/create-driver — crée un chauffeur avec compte Better Auth
+ * Remplace l'ancienne version Supabase admin.
+ */
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-function getSupabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
+import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { drivers, userCompanies } from '@/lib/schema'
+import { eq } from 'drizzle-orm'
 
 export async function POST(request: NextRequest) {
-  try {
-    const supabaseAdmin = getSupabaseAdmin()
-    const body = await request.json()
-    const { name, email, password, companyId } = body
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
-    if (!name || !email || !password || !companyId) {
+  try {
+    const body = await request.json()
+    const { name, email, password, phone } = body
+
+    if (!name || !email || !password) {
       return NextResponse.json(
-        { error: 'Tous les champs sont obligatoires (nom, email, mot de passe)' },
+        { error: 'Champs obligatoires manquants (nom, email, mot de passe)' },
         { status: 400 }
       )
     }
 
+    // Get companyId from session
+    const [uc] = await db
+      .select({ companyId: userCompanies.companyId })
+      .from(userCompanies)
+      .where(eq(userCompanies.userId, session.user.id))
+      .limit(1)
+
+    const companyId = uc?.companyId
+    if (!companyId) {
+      return NextResponse.json({ error: 'Entreprise introuvable pour cet utilisateur' }, { status: 403 })
+    }
     if (password.length < 6) {
       return NextResponse.json(
         { error: 'Le mot de passe doit contenir au moins 6 caractères' },
@@ -28,79 +41,55 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 1. Créer le compte auth via admin API (bypass email validation + rate limits)
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true, // Confirmer automatiquement l'email
-      user_metadata: {
-        full_name: name,
-        role: 'driver',
-      },
+    // 1. Créer le compte Better Auth
+    const signUpRes = await auth.api.signUpEmail({
+      body: { email, password, name },
+      headers: request.headers,
     })
 
-    if (authError) {
-      if (authError.message.includes('already been registered')) {
-        return NextResponse.json(
-          { error: 'Cet email est déjà utilisé par un autre compte' },
-          { status: 409 }
-        )
-      }
-      return NextResponse.json(
-        { error: `Erreur création compte: ${authError.message}` },
-        { status: 400 }
-      )
+    if (!signUpRes?.user) {
+      return NextResponse.json({ error: 'Erreur lors de la création du compte' }, { status: 500 })
     }
+
+    const newUserId = signUpRes.user.id
 
     // 2. Générer les initiales
     const initials = name
       .split(' ')
-      .filter((n: string) => n.length > 0)
+      .filter(Boolean)
       .map((n: string) => n[0])
       .join('')
       .toUpperCase()
       .slice(0, 2)
 
-    // 3. Insérer le chauffeur dans la table drivers avec user_id
-    const { data: driver, error: driverError } = await supabaseAdmin
-      .from('drivers')
-      .insert({
-        company_id: parseInt(companyId),
+    // 3. Insérer le chauffeur en base
+    const [driver] = await db
+      .insert(drivers)
+      .values({
+        companyId: Number(companyId),
+        userId: newUserId,
         name: name.trim(),
         initials,
+        email,
+        phone: phone || null,
         score: 100,
         status: 'active',
-        user_id: authData.user.id,
       })
-      .select()
-      .single()
+      .returning()
 
-    if (driverError) {
-      // Rollback: supprimer le compte auth si l'insert driver échoue
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
-      return NextResponse.json(
-        { error: `Erreur création chauffeur: ${driverError.message}` },
-        { status: 500 }
-      )
-    }
-
-    // 4. Lier le chauffeur à l'entreprise dans user_companies
-    await supabaseAdmin.from('user_companies').insert({
-      user_id: authData.user.id,
-      company_id: parseInt(companyId),
+    // 4. Lier l'utilisateur à l'entreprise avec le rôle driver
+    await db.insert(userCompanies).values({
+      userId: newUserId,
+      companyId: Number(companyId),
       role: 'driver',
     })
 
-    return NextResponse.json({
-      success: true,
-      driver,
-      message: 'Chauffeur créé avec succès',
-    })
+    return NextResponse.json({ success: true, driver, message: 'Chauffeur créé avec succès' })
   } catch (error: any) {
-    console.error('Error in create-driver API:', error)
-    return NextResponse.json(
-      { error: error?.message || 'Erreur interne' },
-      { status: 500 }
-    )
+    console.error('Erreur create-driver:', error)
+    if (error.message?.includes('duplicate') || error.message?.includes('unique')) {
+      return NextResponse.json({ error: 'Cet email est déjà utilisé par un autre compte' }, { status: 409 })
+    }
+    return NextResponse.json({ error: error.message || 'Erreur interne' }, { status: 500 })
   }
 }

@@ -10,7 +10,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { DriverHeader } from "@/components/driver/driver-header"
 import { User, Mail, Calendar, Save, Loader2, CheckCircle, AlertTriangle } from "lucide-react"
-import { supabase } from "@/lib/supabase"
 
 export default function DriverProfilePage() {
   const router = useRouter()
@@ -28,57 +27,35 @@ export default function DriverProfilePage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
+        const [meRes, authRes] = await Promise.all([
+          fetch('/api/chauffeur/me', { credentials: 'include' }),
+          fetch('/api/me', { credentials: 'include' }),
+        ])
 
-        if (!user) {
-          router.push('/login')
+        const meData = await meRes.json()
+        const authData = await authRes.json()
+
+        if (!meData.driver) {
+          if (meRes.status === 401) router.push('/login')
+          setLoading(false)
           return
         }
 
-        setEmail(user.email || "")
+        const driverData = meData.driver
+        setDriver(driverData)
+        setEmail(authData.user?.email || driverData.email || '')
 
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
+        const nameParts = driverData.name?.split(' ') || ['', '']
+        setFormData({
+          firstName: nameParts[0] || '',
+          lastName: nameParts.slice(1).join(' ') || '',
+        })
 
-        if (driverData) {
-          setDriver(driverData)
-
-          const nameParts = driverData.name?.split(' ') || ['', '']
-          setFormData({
-            firstName: nameParts[0] || '',
-            lastName: nameParts.slice(1).join(' ') || '',
-          })
-
-          // Stats sur 3 mois
-          const threeMonthsAgo = new Date()
-          threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
-          const dateLimit = threeMonthsAgo.toISOString().split('T')[0]
-
-          const { data: infData } = await supabase
-            .from('infractions')
-            .select('severity')
-            .eq('driver_id', driverData.id)
-            .gte('date', dateLimit)
-
-          const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
-          let score = 100
-          ;(infData || []).forEach((inf: any) => { score -= penalites[inf.severity] || 1 })
-          score = Math.max(0, Math.min(100, score))
-
-          const { count: analysesCount } = await supabase
-            .from('analyses')
-            .select('id', { count: 'exact', head: true })
-            .eq('driver_id', driverData.id)
-
-          setStats({
-            score,
-            infractions3m: infData?.length || 0,
-            analyses: analysesCount || 0,
-          })
-        }
+        setStats({
+          score: meData.stats?.score ?? driverData.score ?? 0,
+          infractions3m: meData.stats?.infractions3m ?? 0,
+          analyses: meData.stats?.analysesCount ?? 0,
+        })
       } catch (error) {
         console.error('Error loading profile:', error)
       } finally {
@@ -97,21 +74,17 @@ export default function DriverProfilePage() {
 
     try {
       const fullName = `${formData.firstName} ${formData.lastName}`.trim()
-      const initials = `${formData.firstName[0] || ''}${formData.lastName[0] || ''}`.toUpperCase()
+      const res = await fetch('/api/chauffeur/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: fullName }),
+      })
 
-      const { error } = await supabase
-        .from('drivers')
-        .update({
-          name: fullName,
-          initials: initials,
-        })
-        .eq('id', driver.id)
-
-      if (error) {
-        console.error('Error saving profile:', error)
-      } else {
+      if (res.ok) {
+        const updated = await res.json()
         setSaved(true)
-        setDriver({ ...driver, name: fullName, initials })
+        setDriver({ ...driver, name: updated.name, initials: updated.initials })
         setTimeout(() => setSaved(false), 3000)
       }
     } catch (error) {
@@ -139,8 +112,8 @@ export default function DriverProfilePage() {
     )
   }
 
-  const createdAt = driver.created_at
-    ? new Date(driver.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+  const createdAt = driver.createdAt
+    ? new Date(driver.createdAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
     : 'N/A'
 
   return (
@@ -161,9 +134,7 @@ export default function DriverProfilePage() {
                 <AvatarFallback className="text-2xl bg-primary/10 text-primary font-medium">{driver.initials || '?'}</AvatarFallback>
               </Avatar>
               <div className="text-center sm:text-left flex-1">
-                <h2 className="text-xl font-semibold text-foreground">
-                  {driver.name}
-                </h2>
+                <h2 className="text-xl font-semibold text-foreground">{driver.name}</h2>
                 <p className="text-muted-foreground">Chauffeur</p>
                 <div className="mt-2 flex flex-wrap gap-2 justify-center sm:justify-start">
                   <Badge variant={driver.status === 'active' ? 'default' : 'secondary'}>

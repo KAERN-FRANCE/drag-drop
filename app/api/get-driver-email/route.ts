@@ -1,25 +1,28 @@
+/**
+ * POST /api/get-driver-email — retourne l'email d'un utilisateur par son ID Better Auth
+ * Remplace l'ancienne version qui appelait supabase.auth.admin.getUserById().
+ */
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-function getSupabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
+import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { user as userTable } from '@/lib/schema'
+import { eq } from 'drizzle-orm'
 
 export async function POST(request: NextRequest) {
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session) return NextResponse.json({ email: null }, { status: 401 })
+
   try {
-    const supabaseAdmin = getSupabaseAdmin()
     const { userId } = await request.json()
+    if (!userId) return NextResponse.json({ email: null })
 
-    if (!userId) {
-      return NextResponse.json({ email: null })
-    }
+    const [u] = await db
+      .select({ email: userTable.email })
+      .from(userTable)
+      .where(eq(userTable.id, userId))
+      .limit(1)
 
-    const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(userId)
-
-    return NextResponse.json({ email: user?.email || null })
+    return NextResponse.json({ email: u?.email ?? null })
   } catch {
     return NextResponse.json({ email: null })
   }

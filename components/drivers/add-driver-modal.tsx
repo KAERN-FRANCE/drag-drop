@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { getUserCompanyId } from "@/lib/company"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,11 +42,6 @@ export function AddDriverModal({ open, onOpenChange, onDriverAdded }: AddDriverM
                 throw new Error("Le mot de passe doit contenir au moins 6 caractères")
             }
 
-            const companyId = await getUserCompanyId()
-            if (!companyId) {
-                throw new Error("Impossible de trouver votre entreprise. Veuillez vous reconnecter.")
-            }
-
             const response = await fetch('/api/create-driver', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -55,7 +49,6 @@ export function AddDriverModal({ open, onOpenChange, onDriverAdded }: AddDriverM
                     name: formData.fullName.trim(),
                     email: formData.email.trim().toLowerCase(),
                     password: formData.password,
-                    companyId,
                 }),
             })
 

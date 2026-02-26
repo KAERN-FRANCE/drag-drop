@@ -13,7 +13,6 @@ import { generateAnalysisPDF } from "@/lib/generate-pdf"
 import {
   ChevronLeft, Download, AlertTriangle, Calendar, Loader2, Euro, FileText, Lightbulb
 } from "lucide-react"
-import { supabase } from "@/lib/supabase"
 
 const severityToGravity = (severity: string): "3eme" | "4eme" | "5eme" => {
   if (severity === 'critical') return '5eme'
@@ -45,40 +44,25 @@ export default function DriverAnalysisDetailPage() {
 
     const fetchData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.push('/login'); return }
+        const [meRes, analysisRes] = await Promise.all([
+          fetch('/api/chauffeur/me', { credentials: 'include' }),
+          fetch(`/api/analyses/${id}`, { credentials: 'include' }),
+        ])
 
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
+        if (meRes.status === 401) { router.push('/login'); return }
 
-        if (!driverData) { setLoading(false); return }
-        setDriver(driverData)
+        const meData = await meRes.json()
+        if (meData.driver) setDriver(meData.driver)
 
-        const { data: analysisData } = await supabase
-          .from('analyses')
-          .select('*')
-          .eq('id', id)
-          .eq('driver_id', driverData.id)
-          .single()
+        if (!analysisRes.ok) { setLoading(false); return }
 
-        if (analysisData) {
-          setAnalysis({
-            ...analysisData,
-            period: `${new Date(analysisData.period_start).toLocaleDateString('fr-FR')} - ${new Date(analysisData.period_end).toLocaleDateString('fr-FR')}`,
-            date: new Date(analysisData.created_at || analysisData.upload_date).toLocaleDateString('fr-FR'),
-          })
-
-          const { data: infData } = await supabase
-            .from('infractions')
-            .select('*')
-            .eq('analysis_id', id)
-            .order('date', { ascending: true })
-
-          if (infData) setInfractions(infData)
-        }
+        const analysisData = await analysisRes.json()
+        setAnalysis({
+          ...analysisData,
+          period: `${new Date(analysisData.periodStart).toLocaleDateString('fr-FR')} - ${new Date(analysisData.periodEnd).toLocaleDateString('fr-FR')}`,
+          date: new Date(analysisData.uploadDate).toLocaleDateString('fr-FR'),
+        })
+        setInfractions(analysisData.infractions || [])
       } catch (error) {
         console.error('Error loading analysis:', error)
       } finally {

@@ -2,14 +2,13 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DriverHeader } from "@/components/driver/driver-header"
 import { GravityBadge } from "@/components/analysis/gravity-badge"
 import { Search, Filter, AlertTriangle, Calendar, Lightbulb, ChevronDown, ChevronUp, Loader2, Euro } from "lucide-react"
-import { supabase } from "@/lib/supabase"
 
 const severityToGravity = (severity: string): "3eme" | "4eme" | "5eme" => {
   if (severity === 'critical') return '5eme'
@@ -39,31 +38,17 @@ export default function DriverInfractionsPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.push('/login'); return }
+        const res = await fetch('/api/chauffeur/me', { credentials: 'include' })
+        const data = await res.json()
 
-        const { data: driverData } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
+        if (!data.driver) {
+          if (res.status === 401) router.push('/login')
+          setLoading(false)
+          return
+        }
 
-        if (!driverData) { setLoading(false); return }
-        setDriver(driverData)
-
-        // 3 derniers mois
-        const threeMonthsAgo = new Date()
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
-        const dateLimit = threeMonthsAgo.toISOString().split('T')[0]
-
-        const { data: infData } = await supabase
-          .from('infractions')
-          .select('*')
-          .eq('driver_id', driverData.id)
-          .gte('date', dateLimit)
-          .order('date', { ascending: false })
-
-        if (infData) setInfractions(infData)
+        setDriver(data.driver)
+        setInfractions(data.infractions || [])
       } catch (error) {
         console.error('Error loading infractions:', error)
       } finally {
@@ -80,7 +65,6 @@ export default function DriverInfractionsPage() {
     return matchesSearch && matchesGravity
   })
 
-  // Stats
   const totalFines = infractions.reduce((sum, inf) => sum + (severityCosts[inf.severity] || 90), 0)
   const byGravity = {
     "3eme": infractions.filter(i => severityToGravity(i.severity) === "3eme").length,

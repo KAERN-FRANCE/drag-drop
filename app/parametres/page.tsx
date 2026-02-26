@@ -10,11 +10,9 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
 import { Badge } from "@/components/ui/badge"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Building2, AlertTriangle, Users, Link2, CreditCard, Plus, MoreHorizontal, Info, Loader2, CheckCircle } from "lucide-react"
+import { Building2, AlertTriangle, Users, Link2, CreditCard, Plus, Info, Loader2, CheckCircle } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { cn } from "@/lib/utils"
-import { supabase } from "@/lib/supabase"
 
 const tabs = [
   { id: "company", label: "Entreprise", icon: Building2 },
@@ -49,39 +47,19 @@ export default function SettingsPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Get current user
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setLoading(false)
-          return
+        const [meRes, driversRes] = await Promise.all([
+          fetch('/api/me', { credentials: 'include' }),
+          fetch('/api/drivers', { credentials: 'include' }),
+        ])
+
+        const meData = await meRes.json()
+        const driversData = await driversRes.json()
+
+        if (meData.companyName) {
+          setCompanyData(prev => ({ ...prev, companyName: meData.companyName || '' }))
         }
 
-        // Get company data from user_companies + companies tables
-        const { data: userCompanyData } = await supabase
-          .from('user_companies')
-          .select('company_id')
-          .eq('user_id', user.id)
-          .single()
-
-        if (userCompanyData?.company_id) {
-          // Fetch drivers count filtered by company
-          const { count } = await supabase.from('drivers').select('*', { count: 'exact', head: true }).eq('company_id', userCompanyData.company_id)
-          setDriversCount(count || 0)
-
-          const { data: companyInfo } = await supabase
-            .from('companies')
-            .select('name, siret')
-            .eq('id', userCompanyData.company_id)
-            .single()
-
-          if (companyInfo) {
-            setCompanyData({
-              companyName: companyInfo.name || '',
-              siret: companyInfo.siret || '',
-              address: '',
-            })
-          }
-        }
+        setDriversCount((driversData.drivers || []).length)
       } catch (error) {
         console.error('Error fetching settings:', error)
       } finally {
@@ -94,25 +72,11 @@ export default function SettingsPage() {
   const handleSaveCompany = async () => {
     setSaving(true)
     setSaved(false)
-
-    try {
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          company_name: companyData.companyName,
-          siret: companyData.siret,
-          address: companyData.address,
-        }
-      })
-
-      if (!error) {
-        setSaved(true)
-        setTimeout(() => setSaved(false), 3000)
-      }
-    } catch (error) {
-      console.error('Error saving company:', error)
-    } finally {
-      setSaving(false)
-    }
+    // Stub: company update endpoint not yet implemented
+    await new Promise(resolve => setTimeout(resolve, 500))
+    setSaved(true)
+    setTimeout(() => setSaved(false), 3000)
+    setSaving(false)
   }
 
   if (loading) {

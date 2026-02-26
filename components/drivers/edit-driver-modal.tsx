@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, AlertCircle, CheckCircle2, User, Mail } from "lucide-react"
-import { supabase } from "@/lib/supabase"
 
 interface EditDriverModalProps {
   open: boolean
@@ -17,11 +16,11 @@ interface EditDriverModalProps {
 }
 
 export function EditDriverModal({ open, onOpenChange, driver, onDriverUpdated }: EditDriverModalProps) {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState(false)
-  const [name, setName] = useState("")
-  const [email, setEmail] = useState("")
+  const [loading,      setLoading]      = useState(false)
+  const [error,        setError]        = useState("")
+  const [success,      setSuccess]      = useState(false)
+  const [name,         setName]         = useState("")
+  const [email,        setEmail]        = useState("")
   const [loadingEmail, setLoadingEmail] = useState(false)
 
   useEffect(() => {
@@ -31,12 +30,12 @@ export function EditDriverModal({ open, onOpenChange, driver, onDriverUpdated }:
       setError("")
       setSuccess(false)
 
-      // Récupérer l'email depuis Supabase Auth
       if (driver.user_id) {
         setLoadingEmail(true)
         fetch('/api/get-driver-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ userId: driver.user_id }),
         })
           .then(res => res.json())
@@ -53,18 +52,27 @@ export function EditDriverModal({ open, onOpenChange, driver, onDriverUpdated }:
     setLoading(true)
 
     try {
-      if (!name.trim()) {
-        throw new Error("Le nom est obligatoire")
+      if (!name.trim()) throw new Error("Le nom est obligatoire")
+
+      const initials = name.trim()
+        .split(" ")
+        .filter(n => n.length > 0)
+        .map(n => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+
+      const res = await fetch(`/api/drivers/${driver.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: name.trim(), initials }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Erreur lors de la mise à jour')
       }
-
-      const initials = name.trim().split(" ").filter(n => n.length > 0).map(n => n[0]).join("").toUpperCase().slice(0, 2)
-
-      const { error: updateError } = await supabase
-        .from("drivers")
-        .update({ name: name.trim(), initials })
-        .eq("id", driver.id)
-
-      if (updateError) throw new Error(updateError.message)
 
       setSuccess(true)
       setTimeout(() => {
@@ -91,14 +99,7 @@ export function EditDriverModal({ open, onOpenChange, driver, onDriverUpdated }:
             <Label htmlFor="edit-name">Nom complet <span className="text-destructive">*</span></Label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="edit-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={loading}
-                className="pl-9"
-                required
-              />
+              <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} disabled={loading} className="pl-9" required />
             </div>
           </div>
 
@@ -106,13 +107,7 @@ export function EditDriverModal({ open, onOpenChange, driver, onDriverUpdated }:
             <Label htmlFor="edit-email">Email</Label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="edit-email"
-                type="email"
-                value={loadingEmail ? "Chargement..." : email}
-                disabled
-                className="pl-9 bg-muted"
-              />
+              <Input id="edit-email" type="email" value={loadingEmail ? "Chargement..." : email} disabled className="pl-9 bg-muted" />
             </div>
             <p className="text-xs text-muted-foreground">L'email est lié au compte de connexion et ne peut pas être modifié ici.</p>
           </div>
