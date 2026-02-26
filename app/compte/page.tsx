@@ -174,12 +174,13 @@ export default function AccountPage() {
     setDeleteError("")
 
     try {
-      await authClient.signOut()
+      const { error } = await authClient.deleteUser({})
+      if (error) throw error
       localStorage.clear()
       router.push('/')
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting account:', error)
-      setDeleteError("Une erreur est survenue")
+      setDeleteError(error?.message || "Une erreur est survenue")
     } finally {
       setDeleting(false)
     }

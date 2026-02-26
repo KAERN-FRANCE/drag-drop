@@ -20,6 +20,13 @@ export const auth = betterAuth({
     minPasswordLength: 6,
   },
 
+  // ── Suppression de compte ─────────────────────────────
+  user: {
+    deleteUser: {
+      enabled: true,
+    },
+  },
+
   // ── Secret de session (BETTER_AUTH_SECRET dans .env) ─
   secret: process.env.BETTER_AUTH_SECRET!,
 
