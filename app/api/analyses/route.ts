@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
   allInfractions.forEach((inf) => { globalScore -= penalites[inf.severity] || 5 })
   globalScore = Math.max(0, Math.min(100, globalScore))
 
-  await db.update(drivers).set({ score: globalScore }).where(eq(drivers.id, driverId))
+  await db.update(drivers).set({ score: globalScore, updatedAt: new Date() }).where(eq(drivers.id, driverId))
 
   return NextResponse.json({
     success: true,

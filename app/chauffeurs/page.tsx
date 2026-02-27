@@ -70,7 +70,7 @@ export default function DriversListPage() {
 
     const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
     const formatted = driversList.map(driver => {
-      const driverInf = infList.filter(inf => inf.driver_id === driver.id)
+      const driverInf = infList.filter(inf => inf.driverId === driver.id)
       let score = 100
       driverInf.forEach(inf => { score -= penalites[inf.severity] || 5 })
       score = Math.max(0, Math.min(100, score))
@@ -78,7 +78,7 @@ export default function DriversListPage() {
         ...driver,
         score,
         infractions: driverInf.length,
-        lastAnalysis: new Date(driver.updated_at).toLocaleDateString("fr-FR", { day: 'numeric', month: 'long' }),
+        lastAnalysis: driver.updatedAt ? new Date(driver.updatedAt).toLocaleDateString("fr-FR", { day: 'numeric', month: 'long' }) : '—',
       }
     })
     setDrivers(formatted)
