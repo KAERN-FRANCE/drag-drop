@@ -71,7 +71,7 @@ export default function DriverDetailPage() {
 
       // Ranking
       const scores = allDrivers.map(d => {
-        const dInf = allInf.filter(inf => inf.driver_id === d.id)
+        const dInf = allInf.filter(inf => inf.driverId === d.id)
         let score = 100
         dInf.forEach(inf => { score -= penalites[inf.severity] || 5 })
         return { id: d.id, score: Math.max(0, Math.min(100, score)) }

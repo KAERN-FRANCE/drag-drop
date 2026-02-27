@@ -75,7 +75,7 @@ export function KPICards() {
 
         const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
         const driverScores = driversList.map(driver => {
-          const driverInf = infList.filter((inf: any) => inf.driver_id === driver.id)
+          const driverInf = infList.filter((inf: any) => inf.driverId === driver.id)
           let score = 100
           driverInf.forEach((inf: any) => { score -= penalites[inf.severity] || 5 })
           return Math.max(0, Math.min(100, score))
