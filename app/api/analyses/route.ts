@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Données manquantes' }, { status: 400 })
   }
 
+  try {
   // 1. Créer l'analyse
   const [analysis] = await db
     .insert(analyses)
@@ -77,10 +78,11 @@ export async function POST(request: NextRequest) {
     })
     .returning()
 
-  // 2. Insérer les infractions
-  if (infractionsData && infractionsData.length > 0) {
+  // 2. Insérer les infractions (filtrer les dates invalides)
+  const validInfractions = (infractionsData ?? []).filter(inf => /^\d{4}-\d{2}-\d{2}$/.test(inf.date))
+  if (validInfractions.length > 0) {
     await db.insert(infractions).values(
-      infractionsData.map((inf) => ({
+      validInfractions.map((inf) => ({
         driverId,
         companyId: companyId ?? undefined,
         analysisId: analysis.id,
@@ -113,4 +115,11 @@ export async function POST(request: NextRequest) {
     analysisId: analysis.id,
     driverScore: globalScore,
   })
+  } catch (error: any) {
+    console.error('Erreur POST /api/analyses:', error)
+    return NextResponse.json(
+      { error: error?.message || 'Erreur interne lors de la sauvegarde de l\'analyse' },
+      { status: 500 }
+    )
+  }
 }

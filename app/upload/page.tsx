@@ -310,7 +310,7 @@ export default function UploadPage() {
       // Appel unique à /api/analyses (crée analyse + infractions + recalcule score)
       const infractionsData = infractions.map(inf => ({
         type: inf.type,
-        date: fileIsC1B ? inf.date : parseFrenchDate(inf.date),
+        date: parseFrenchDate(inf.date),
         severity: inf.gravite === 'delit' ? 'critical' : inf.gravite === '5eme' ? 'high' : inf.gravite === '4eme' ? 'medium' : 'low'
       }))
 
