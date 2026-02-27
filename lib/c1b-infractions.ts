@@ -217,7 +217,8 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       if (h > 10 + EPSILON) {
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_JOUR_9H')!
         const dep = h - 10
-        const grav: GraviteInfraction = dep > 1 ? '5eme' : '4eme'
+        // MSI (5ème) si > 10h × 120% = 12h — Règl. 2016/403/UE
+        const grav: GraviteInfraction = dep > 2 ? '5eme' : '4eme'
         infractions.push({
           date: jour.dateLabel, type: 'Conduite journalière excessive', code: regle.code,
           detail: `${h.toFixed(2)}h de conduite (max 10h absolu, +${dep.toFixed(2)}h)`,
@@ -253,7 +254,8 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       if (jour.restMinutes < 9 * 60) {
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
         const h = jour.restMinutes / 60
-        const grav: GraviteInfraction = h < 6 ? '5eme' : '4eme'
+        // Tout repos < 9h est MSI (5ème) — Règl. 2016/403/UE (réduction de plus de 2h)
+        const grav: GraviteInfraction = '5eme'
         infractions.push({
           date: jour.dateLabel, type: 'Repos journalier insuffisant', code: regle.code,
           detail: `${h.toFixed(2)}h de repos (min 9h absolu)`,
@@ -319,7 +321,8 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
     if (conduiteH > 56 + EPSILON) {
       const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_HEBDO_56H')!
       const dep = conduiteH - 56
-      const grav: GraviteInfraction = dep > 14 ? '5eme' : '4eme'
+      // MSI (5ème) si > 60h (maximum absolu hebdomadaire) — Règl. 2016/403/UE
+      const grav: GraviteInfraction = dep > 4 ? '5eme' : '4eme'
       infractions.push({
         date: week.weekLabel, type: 'Conduite hebdomadaire excessive', code: regle.code,
         detail: `${conduiteH.toFixed(2)}h (max 56h, +${dep.toFixed(2)}h)`,
@@ -332,7 +335,8 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
     const reposH = week.restMinutes / 60
     if (reposH > 0 && reposH < 45) {
       const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_HEBDO_45H')!
-      const grav: GraviteInfraction = reposH < 20 ? '5eme' : '4eme'
+      // MSI (5ème) si < 24h (repos réduit sous le minimum absolu) — Règl. 2016/403/UE
+      const grav: GraviteInfraction = reposH < 24 ? '5eme' : '4eme'
       infractions.push({
         date: week.weekLabel, type: 'Repos hebdomadaire insuffisant', code: regle.code,
         detail: `${reposH.toFixed(2)}h de repos (min 45h, réduction 24h avec compensation)`,
@@ -352,7 +356,8 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
     if (total > 90) {
       const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_2SEM_90H')!
       const dep  = total - 90
-      const grav: GraviteInfraction = dep > 22.5 ? '5eme' : '4eme'
+      // MSI (5ème) si > 100h (maximum absolu bi-hebdomadaire) — Règl. 2016/403/UE
+      const grav: GraviteInfraction = dep > 10 ? '5eme' : '4eme'
       infractions.push({
         date: `${w1.weekLabel} + ${w2.weekLabel}`, type: 'Conduite 2 semaines excessive', code: regle.code,
         detail: `${total.toFixed(2)}h sur 2 semaines (max 90h, +${dep.toFixed(2)}h)`,
