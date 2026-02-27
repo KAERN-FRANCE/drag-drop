@@ -400,24 +400,29 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
         segmentStart = act.start
       }
 
-    } else if ((act.type === 'REST' || act.type === 'AVAILABILITY') && conducteSinceBreak > 0) {
+    } else if (act.type === 'REST' && conducteSinceBreak > 0) {
+      // AVAILABILITY (disponibilité) n'est PAS une pause réglementaire (CE 561/2006 Art. 7)
+      // Seule la période de REST compte comme coupure valide
       const dur = act.duration_minutes
 
       if (breakPhase === 0) {
         if (dur >= BREAK_FULL) {
-          // Pause unique complète
+          // Pause unique complète (≥ 45 min)
           conducteSinceBreak = 0; breakPhase = 0; firstBreakMin = 0; segmentStart = null
         } else if (dur >= BREAK1_MIN) {
-          // 1ère partie d'une pause fractionnée
+          // 1ère partie d'une pause fractionnée (≥ 15 min)
           breakPhase = 1; firstBreakMin = dur
         }
       } else {
-        // On attend la 2ème partie
-        if (dur >= BREAK2_MIN || (firstBreakMin + dur) >= BREAK_FULL) {
+        // On attend la 2ème partie (doit être ≥ 30 min indépendamment)
+        if (dur >= BREAK2_MIN) {
           // 2ème partie valide
           conducteSinceBreak = 0; breakPhase = 0; firstBreakMin = 0; segmentStart = null
+        } else if (dur >= BREAK1_MIN) {
+          // Ce repos ≥ 15 min peut servir de nouvelle 1ère partie
+          firstBreakMin = dur
         }
-        // Sinon : pause insuffisante, continue d'attendre
+        // < 15 min : ignoré, on continue d'attendre
       }
     }
   }

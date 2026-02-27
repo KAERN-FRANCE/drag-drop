@@ -29,10 +29,10 @@ const tooltipLabelStyle = { color: "#e2e8f0", fontWeight: 600, fontSize: 13, mar
 const tooltipItemStyle = { color: "#94a3b8", fontSize: 12 }
 
 const severityConfig = [
-  { key: "critical", label: "Critiques (5ème classe / délit)", color: "#ef4444", cost: 1500 },
-  { key: "high", label: "Majeures (4ème classe)", color: "#f97316", cost: 750 },
-  { key: "medium", label: "Moyennes (3ème classe)", color: "#eab308", cost: 135 },
-  { key: "low", label: "Mineures", color: "#22c55e", cost: 90 },
+  { key: "critical", label: "Délits",               color: "#ef4444", cost: 1500 },
+  { key: "high",     label: "Graves (5ème classe)",  color: "#f97316", cost: 750 },
+  { key: "medium",   label: "Sérieuses (4ème cl.)",  color: "#eab308", cost: 135 },
+  { key: "low",      label: "Mineures (3ème cl.)",   color: "#22c55e", cost: 90 },
 ]
 
 export function OverviewTab({ infractions }: OverviewTabProps) {
@@ -95,7 +95,7 @@ export function OverviewTab({ infractions }: OverviewTabProps) {
       .map(([type, { count, severity }]) => ({
         type,
         count,
-        gravity: severity === 'critical' ? '5eme' : severity === 'high' ? '4eme' : severity === 'medium' ? '3eme' : '3eme'
+        gravity: severity === 'critical' ? 'delit' : severity === 'high' ? '5eme' : severity === 'medium' ? '4eme' : '3eme'
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5)

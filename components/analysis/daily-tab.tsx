@@ -28,7 +28,7 @@ export function DailyTab({ infractions }: DailyTabProps) {
       grouped.get(date)?.push({
         type: inf.type,
         severity: inf.severity,
-        gravity: inf.severity === 'critical' ? '5eme' : inf.severity === 'high' ? '4eme' : inf.severity === 'medium' ? '3eme' : '3eme'
+        gravity: inf.severity === 'critical' ? 'delit' : inf.severity === 'high' ? '5eme' : inf.severity === 'medium' ? '4eme' : '3eme'
       })
     })
 
