@@ -360,17 +360,30 @@ export default function DriverDetailPage() {
                   ) : (
                     <div className="space-y-3">
                       {allInfractions12m.map((inf, index) => (
-                        <div key={inf.id || index} className="flex items-center justify-between rounded-lg border border-border p-4">
-                          <div className="flex items-center gap-4">
-                            <div className={cn("flex h-10 w-10 items-center justify-center rounded-full", inf.severity === 'critical' ? "bg-danger/10" : inf.severity === 'high' ? "bg-warning/10" : "bg-muted")}>
-                              <AlertTriangle className={cn("h-5 w-5", inf.severity === 'critical' ? "text-danger" : inf.severity === 'high' ? "text-warning" : "text-muted-foreground")} />
+                        <div key={inf.id || index} className="rounded-lg border border-border p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={cn("flex h-10 w-10 items-center justify-center rounded-full", inf.severity === 'critical' ? "bg-danger/10" : inf.severity === 'high' ? "bg-warning/10" : "bg-muted")}>
+                                <AlertTriangle className={cn("h-5 w-5", inf.severity === 'critical' ? "text-danger" : inf.severity === 'high' ? "text-warning" : "text-muted-foreground")} />
+                              </div>
+                              <div>
+                                <p className="font-medium text-foreground">{inf.type}</p>
+                                <p className="text-sm text-muted-foreground">{new Date(inf.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-medium text-foreground">{inf.type}</p>
-                              <p className="text-sm text-muted-foreground">{new Date(inf.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                            </div>
+                            <GravityBadge gravity={inf.details?.gravite || (inf.severity === 'critical' ? '5eme' : inf.severity === 'high' ? '4eme' : '3eme')} />
                           </div>
-                          <GravityBadge gravity={inf.severity === 'critical' ? '5eme' : inf.severity === 'high' ? '4eme' : '3eme'} />
+                          {inf.details && (
+                            <div className="mt-3 ml-14 space-y-1.5 text-sm">
+                              <p className="text-foreground font-medium">{inf.details.detail}</p>
+                              <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
+                                <span>Constaté : <span className="font-mono font-semibold text-foreground">{inf.details.valeur_constatee}h</span></span>
+                                <span>Limite : <span className="font-mono font-semibold text-foreground">{inf.details.limite_reglementaire}h</span></span>
+                                <span>Amende : <span className="font-mono font-semibold text-foreground">{inf.details.amende_min}€ – {inf.details.amende_max}€</span></span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">{inf.details.article_loi}</p>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

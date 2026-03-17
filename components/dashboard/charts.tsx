@@ -16,12 +16,6 @@ import { useEffect, useState } from "react"
 
 const getMonthName = (date: Date) => date.toLocaleDateString('fr-FR', { month: 'short' })
 
-const getDateLimit12Months = () => {
-  const d = new Date()
-  d.setMonth(d.getMonth() - 12)
-  return d.toISOString().split('T')[0]
-}
-
 const tooltipStyle = {
   backgroundColor: "#1e293b",
   border: "none",
@@ -32,13 +26,18 @@ const tooltipStyle = {
 const tooltipLabelStyle = { color: "#e2e8f0", fontWeight: 600, fontSize: 13, marginBottom: 4 }
 const tooltipItemStyle  = { color: "#94a3b8", fontSize: 12 }
 
+interface ChartProps {
+  dateFrom: string
+  dateTo: string
+}
 
-export function MonthlyEvolutionChart() {
+export function MonthlyEvolutionChart({ dateFrom, dateTo }: ChartProps) {
   const [data, setData]     = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch(`/api/infractions?dateFrom=${getDateLimit12Months()}`, { credentials: 'include' })
+    setLoading(true)
+    fetch(`/api/infractions?dateFrom=${dateFrom}&dateTo=${dateTo}`, { credentials: 'include' })
       .then(r => r.json())
       .then((infractions: any[]) => {
         if (infractions?.length > 0) {
@@ -56,17 +55,19 @@ export function MonthlyEvolutionChart() {
             const [year, month] = key.split('-')
             return { month: getMonthName(new Date(Number(year), Number(month))), infractions: counts[key] }
           }))
+        } else {
+          setData([])
         }
       })
       .catch(e => console.error(e))
       .finally(() => setLoading(false))
-  }, [])
+  }, [dateFrom, dateTo])
 
   return (
     <Card className="lg:col-span-2">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
-          Évolution des infractions <span className="text-xs opacity-70">(12 derniers mois)</span>
+          Évolution des infractions
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -105,13 +106,14 @@ export function MonthlyEvolutionChart() {
 }
 
 
-export function SeverityBreakdownChart() {
+export function SeverityBreakdownChart({ dateFrom, dateTo }: ChartProps) {
   const [data, setData]     = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [totals, setTotals] = useState({ critical: 0, high: 0, medium: 0, low: 0 })
 
   useEffect(() => {
-    fetch(`/api/infractions?dateFrom=${getDateLimit12Months()}`, { credentials: 'include' })
+    setLoading(true)
+    fetch(`/api/infractions?dateFrom=${dateFrom}&dateTo=${dateTo}`, { credentials: 'include' })
       .then(r => r.json())
       .then((infractions: any[]) => {
         if (infractions?.length > 0) {
@@ -132,11 +134,14 @@ export function SeverityBreakdownChart() {
             return { month: getMonthName(new Date(Number(year), Number(month))), ...monthData[key] }
           }))
           setTotals(tots)
+        } else {
+          setData([])
+          setTotals({ critical: 0, high: 0, medium: 0, low: 0 })
         }
       })
       .catch(e => console.error(e))
       .finally(() => setLoading(false))
-  }, [])
+  }, [dateFrom, dateTo])
 
   const severityConfig = [
     { key: "critical", label: "Critiques",  color: "#ef4444" },
@@ -150,7 +155,7 @@ export function SeverityBreakdownChart() {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
-          Répartition par gravité <span className="text-xs opacity-70">(12 derniers mois)</span>
+          Répartition par gravité
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -199,12 +204,13 @@ export function SeverityBreakdownChart() {
 }
 
 
-export function TopInfractionsChart() {
+export function TopInfractionsChart({ dateFrom, dateTo }: ChartProps) {
   const [data, setData]     = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch(`/api/infractions?dateFrom=${getDateLimit12Months()}`, { credentials: 'include' })
+    setLoading(true)
+    fetch(`/api/infractions?dateFrom=${dateFrom}&dateTo=${dateTo}`, { credentials: 'include' })
       .then(r => r.json())
       .then((infractions: any[]) => {
         if (infractions) {
@@ -220,7 +226,7 @@ export function TopInfractionsChart() {
       })
       .catch(e => console.error(e))
       .finally(() => setLoading(false))
-  }, [])
+  }, [dateFrom, dateTo])
 
   const colors = ["#3b82f6", "#6366f1", "#8b5cf6", "#0ea5e9", "#06b6d4"]
 
@@ -228,7 +234,7 @@ export function TopInfractionsChart() {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
-          Top 5 — Infractions les plus fréquentes <span className="text-xs opacity-70">(12 derniers mois)</span>
+          Top 5 — Infractions les plus fréquentes
         </CardTitle>
       </CardHeader>
       <CardContent>

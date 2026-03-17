@@ -311,7 +311,17 @@ export default function UploadPage() {
       const infractionsData = infractions.map(inf => ({
         type: inf.type,
         date: parseFrenchDate(inf.date),
-        severity: inf.gravite === 'delit' ? 'critical' : inf.gravite === '5eme' ? 'high' : inf.gravite === '4eme' ? 'medium' : 'low'
+        severity: inf.gravite === 'delit' ? 'critical' : inf.gravite === '5eme' ? 'high' : inf.gravite === '4eme' ? 'medium' : 'low',
+        details: {
+          code: inf.code,
+          detail: inf.detail,
+          valeur_constatee: inf.valeur_constatee,
+          limite_reglementaire: inf.limite_reglementaire,
+          gravite: inf.gravite,
+          amende_min: inf.amende_min,
+          amende_max: inf.amende_max,
+          article_loi: inf.article_loi,
+        }
       }))
 
       const saveRes = await fetch('/api/analyses', {

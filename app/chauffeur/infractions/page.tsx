@@ -186,7 +186,18 @@ export default function DriverInfractionsPage() {
                   </button>
 
                   {isExpanded && (
-                    <div className="border-t border-border bg-muted/30 p-4">
+                    <div className="border-t border-border bg-muted/30 p-4 space-y-3">
+                      {inf.details && (
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-foreground">{inf.details.detail}</p>
+                          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
+                            <span>Constaté : <span className="font-mono font-semibold text-foreground">{inf.details.valeur_constatee}h</span></span>
+                            <span>Limite : <span className="font-mono font-semibold text-foreground">{inf.details.limite_reglementaire}h</span></span>
+                            <span>Amende : <span className="font-mono font-semibold text-foreground">{inf.details.amende_min}€ – {inf.details.amende_max}€</span></span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{inf.details.article_loi}</p>
+                        </div>
+                      )}
                       <div className="flex items-start gap-3">
                         <div className="rounded-lg bg-primary/10 p-2">
                           <Lightbulb className="h-5 w-5 text-primary" />

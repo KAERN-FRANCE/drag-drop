@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { analyses, infractions, drivers, userCompanies } from '@/lib/schema'
-import { eq, desc, gte, and } from 'drizzle-orm'
+import { eq, desc, gte, lte, and } from 'drizzle-orm'
 
 async function getSessionCompanyId(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers })
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     periodStart: string
     periodEnd: string
     score: number
-    infractionsData: Array<{ type: string; date: string; severity: string }>
+    infractionsData: Array<{ type: string; date: string; severity: string; details?: Record<string, any> }>
   }
 
   if (!driverId || !periodStart || !periodEnd) {
@@ -65,6 +65,20 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+  // 0. Supprimer les analyses existantes qui chevauchent la même période pour ce chauffeur
+  const overlapping = await db
+    .select({ id: analyses.id })
+    .from(analyses)
+    .where(and(
+      eq(analyses.driverId, driverId),
+      lte(analyses.periodStart, periodEnd),
+      gte(analyses.periodEnd, periodStart),
+    ))
+
+  for (const old of overlapping) {
+    await db.delete(analyses).where(eq(analyses.id, old.id))
+  }
+
   // 1. Créer l'analyse
   const [analysis] = await db
     .insert(analyses)
@@ -89,6 +103,7 @@ export async function POST(request: NextRequest) {
         type: inf.type,
         severity: inf.severity as 'low' | 'medium' | 'high' | 'critical',
         date: inf.date,
+        details: inf.details ?? null,
       }))
     )
   }

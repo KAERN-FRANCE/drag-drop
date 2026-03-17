@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { Search, TrendingUp, TrendingDown, MoreHorizontal, Eye, FileSearch, Download } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -26,22 +27,23 @@ function ScoreGauge({ score }: { score: number }) {
   )
 }
 
-export function DriversTable() {
+interface DriversTableProps {
+  dateFrom: string
+  dateTo: string
+}
+
+export function DriversTable({ dateFrom, dateTo }: DriversTableProps) {
   const [searchQuery,   setSearchQuery]   = useState("")
   const [statusFilter,  setStatusFilter]  = useState("all")
-  const [periodFilter,  setPeriodFilter]  = useState("month")
   const [drivers,       setDrivers]       = useState<any[]>([])
   const [loading,       setLoading]       = useState(true)
 
   useEffect(() => {
     const fetchDrivers = async () => {
-      const dateLimit = new Date()
-      dateLimit.setMonth(dateLimit.getMonth() - 12)
-      const dateLimitStr = dateLimit.toISOString().split('T')[0]
-
+      setLoading(true)
       const [driversRes, infRes] = await Promise.all([
         fetch('/api/drivers', { credentials: 'include' }),
-        fetch(`/api/infractions?dateFrom=${dateLimitStr}`, { credentials: 'include' }),
+        fetch(`/api/infractions?dateFrom=${dateFrom}&dateTo=${dateTo}`, { credentials: 'include' }),
       ])
 
       const driversData = await driversRes.json()
@@ -66,7 +68,7 @@ export function DriversTable() {
       setLoading(false)
     }
     fetchDrivers()
-  }, [])
+  }, [dateFrom, dateTo])
 
   const filteredDrivers = drivers.filter(driver => {
     const matchesSearch = driver.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -81,7 +83,7 @@ export function DriversTable() {
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-semibold">
-          Vue d'ensemble de la flotte <span className="text-xs font-normal text-muted-foreground">(12 derniers mois)</span>
+          Vue d'ensemble de la flotte
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -96,14 +98,6 @@ export function DriversTable() {
               <SelectItem value="all">Tous</SelectItem>
               <SelectItem value="risk">À risque</SelectItem>
               <SelectItem value="compliant">Conformes</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={periodFilter} onValueChange={setPeriodFilter}>
-            <SelectTrigger className="w-[160px]"><SelectValue placeholder="Période" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="month">Ce mois</SelectItem>
-              <SelectItem value="lastMonth">Mois dernier</SelectItem>
-              <SelectItem value="quarter">3 derniers mois</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -149,7 +143,9 @@ export function DriversTable() {
                         <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem><Eye className="mr-2 h-4 w-4" />Voir détails</DropdownMenuItem>
+                        <Link href={`/chauffeurs/${driver.id}`}>
+                          <DropdownMenuItem><Eye className="mr-2 h-4 w-4" />Voir détails</DropdownMenuItem>
+                        </Link>
                         <DropdownMenuItem><FileSearch className="mr-2 h-4 w-4" />Analyses</DropdownMenuItem>
                         <DropdownMenuItem><Download className="mr-2 h-4 w-4" />Exporter</DropdownMenuItem>
                       </DropdownMenuContent>
@@ -163,10 +159,6 @@ export function DriversTable() {
 
         <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
           <span>{filteredDrivers.length} chauffeurs</span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled>Précédent</Button>
-            <Button variant="outline" size="sm">Suivant</Button>
-          </div>
         </div>
       </CardContent>
     </Card>

@@ -46,7 +46,12 @@ function KPICard({ icon: Icon, value, label, subtitle, iconColor = "default", lo
   )
 }
 
-export function KPICards() {
+interface KPICardsProps {
+  dateFrom: string
+  dateTo: string
+}
+
+export function KPICards({ dateFrom, dateTo }: KPICardsProps) {
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     compliance: 0,
@@ -58,14 +63,11 @@ export function KPICards() {
 
   useEffect(() => {
     const fetchStats = async () => {
+      setLoading(true)
       try {
-        const dateLimit = new Date()
-        dateLimit.setMonth(dateLimit.getMonth() - 12)
-        const dateLimitStr = dateLimit.toISOString().split('T')[0]
-
         const [driversRes, infractionsRes] = await Promise.all([
           fetch('/api/drivers', { credentials: 'include' }),
-          fetch(`/api/infractions?dateFrom=${dateLimitStr}`, { credentials: 'include' }),
+          fetch(`/api/infractions?dateFrom=${dateFrom}&dateTo=${dateTo}`, { credentials: 'include' }),
         ])
 
         const driversData = await driversRes.json()
@@ -106,7 +108,7 @@ export function KPICards() {
       }
     }
     fetchStats()
-  }, [])
+  }, [dateFrom, dateTo])
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -121,8 +123,8 @@ export function KPICards() {
       <KPICard
         icon={AlertTriangle}
         value={stats.infractions.toString()}
-        label="Infractions (12 mois)"
-        subtitle="Période réglementaire contrôle entreprise"
+        label="Infractions"
+        subtitle="Sur la période sélectionnée"
         iconColor="warning"
         loading={loading}
       />
@@ -138,7 +140,7 @@ export function KPICards() {
         icon={Euro}
         value={`${stats.fines.toLocaleString()}€`}
         label="Coût potentiel amendes"
-        subtitle="Risque si contrôle (12 mois)"
+        subtitle="Risque si contrôle"
         iconColor="danger"
         loading={loading}
       />

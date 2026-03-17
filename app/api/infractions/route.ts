@@ -1,12 +1,12 @@
 /**
  * GET /api/infractions — liste les infractions de l'entreprise
- * Query params optionnels : dateFrom, driverId, analysisId
+ * Query params optionnels : dateFrom, dateTo, driverId, analysisId
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { infractions, userCompanies } from '@/lib/schema'
-import { eq, gte, and, desc } from 'drizzle-orm'
+import { eq, gte, lte, and, desc } from 'drizzle-orm'
 
 export async function GET(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers })
@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const dateFrom   = searchParams.get('dateFrom')
+    const dateTo     = searchParams.get('dateTo')
     const driverId   = searchParams.get('driverId')
     const analysisId = searchParams.get('analysisId')
 
@@ -29,6 +30,7 @@ export async function GET(request: NextRequest) {
     const conditions: any[] = []
     if (companyId)  conditions.push(eq(infractions.companyId, companyId))
     if (dateFrom)   conditions.push(gte(infractions.date, dateFrom))
+    if (dateTo)     conditions.push(lte(infractions.date, dateTo))
     if (driverId)   conditions.push(eq(infractions.driverId, parseInt(driverId)))
     if (analysisId) conditions.push(eq(infractions.analysisId, parseInt(analysisId)))
 

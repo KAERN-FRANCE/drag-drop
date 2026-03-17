@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { LayoutDashboard, Users, FileSearch, Settings, User, LogOut, Truck } from "lucide-react"
+import { LayoutDashboard, Users, FileSearch, Settings, User, LogOut, Truck, BookOpen } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
   { icon: Users, label: "Chauffeurs", href: "/chauffeurs" },
   { icon: FileSearch, label: "Analyses", href: "/analyses" },
+  { icon: BookOpen, label: "Méthodologie", href: "/methodologie" },
   { icon: Settings, label: "Paramètres", href: "/parametres" },
   { icon: User, label: "Mon compte", href: "/compte" },
 ]

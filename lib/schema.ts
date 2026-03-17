@@ -12,6 +12,7 @@ import {
   boolean,
   timestamp,
   date,
+  jsonb,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core'
@@ -128,6 +129,17 @@ export const analyses = pgTable('analyses', {
   createdAt: timestamp('created_at').defaultNow(),
 })
 
+export interface InfractionDetails {
+  code?: string
+  detail?: string
+  valeur_constatee?: number
+  limite_reglementaire?: number
+  gravite?: string
+  amende_min?: number
+  amende_max?: number
+  article_loi?: string
+}
+
 export const infractions = pgTable('infractions', {
   id: serial('id').primaryKey(),
   driverId: integer('driver_id').references(() => drivers.id, { onDelete: 'cascade' }),
@@ -136,6 +148,7 @@ export const infractions = pgTable('infractions', {
   type: text('type').notNull(),
   severity: text('severity', { enum: ['low', 'medium', 'high', 'critical'] }).notNull(),
   date: date('date').notNull(),
+  details: jsonb('details').$type<InfractionDetails>(),
   createdAt: timestamp('created_at').defaultNow(),
 })
 
