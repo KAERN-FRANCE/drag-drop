@@ -10,6 +10,14 @@ interface PDFAnalysisData {
     date: string
     type: string
     severity: string
+    details?: {
+      detail?: string
+      valeur_constatee?: number
+      limite_reglementaire?: number
+      article_loi?: string
+      amende_min?: number
+      amende_max?: number
+    } | null
   }[]
 }
 
@@ -126,27 +134,40 @@ export function generateAnalysisPDF(data: PDFAnalysisData) {
   if (data.infractions.length > 0) {
     const infRows = data.infractions
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .map(inf => [
-        new Date(inf.date).toLocaleDateString("fr-FR"),
-        inf.type,
-        severityLabels[inf.severity] || inf.severity,
-        `${severityCosts[inf.severity] || 90}€`,
-      ])
+      .map(inf => {
+        const d = inf.details
+        const detailStr = d
+          ? `${d.valeur_constatee ?? '?'}h / ${d.limite_reglementaire ?? '?'}h`
+          : '—'
+        const amendeStr = d?.amende_min != null
+          ? `${d.amende_min}€–${d.amende_max}€`
+          : `${severityCosts[inf.severity] || 90}€`
+        return [
+          new Date(inf.date).toLocaleDateString("fr-FR"),
+          inf.type,
+          detailStr,
+          severityLabels[inf.severity] || inf.severity,
+          amendeStr,
+          d?.article_loi || '',
+        ]
+      })
 
     autoTable(doc, {
       startY: y,
-      head: [["Date", "Type d'infraction", "Gravité", "Amende"]],
+      head: [["Date", "Infraction", "Constaté / Limite", "Gravité", "Amende", "Article"]],
       body: infRows,
       theme: "striped",
-      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 10 },
-      styles: { fontSize: 9, cellPadding: 4 },
+      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 9 },
+      styles: { fontSize: 8, cellPadding: 3 },
       columnStyles: {
-        0: { cellWidth: 25 },
-        1: { cellWidth: "auto" },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 25 },
+        0: { cellWidth: 22 },
+        1: { cellWidth: 45 },
+        2: { cellWidth: 28 },
+        3: { cellWidth: 28 },
+        4: { cellWidth: 25 },
+        5: { cellWidth: 28 },
       },
-      margin: { left: 20, right: 20 },
+      margin: { left: 14, right: 14 },
     })
   }
 

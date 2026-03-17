@@ -28,7 +28,8 @@ export function DailyTab({ infractions }: DailyTabProps) {
       grouped.get(date)?.push({
         type: inf.type,
         severity: inf.severity,
-        gravity: inf.severity === 'critical' ? 'delit' : inf.severity === 'high' ? '5eme' : inf.severity === 'medium' ? '4eme' : '3eme'
+        gravity: inf.details?.gravite || (inf.severity === 'critical' ? 'delit' : inf.severity === 'high' ? '5eme' : inf.severity === 'medium' ? '4eme' : '3eme'),
+        details: inf.details || null,
       })
     })
 
@@ -120,10 +121,23 @@ export function DailyTab({ infractions }: DailyTabProps) {
                           {day.infractions.map((infraction: any, index: number) => (
                             <div
                               key={index}
-                              className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2"
+                              className="rounded-lg border border-border bg-card px-3 py-2"
                             >
-                              <span className="text-sm">{infraction.type}</span>
-                              <GravityBadge gravity={infraction.gravity} />
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm font-medium">{infraction.type}</span>
+                                <GravityBadge gravity={infraction.gravity} />
+                              </div>
+                              {infraction.details && (
+                                <div className="mt-1.5 space-y-1">
+                                  <p className="text-sm text-foreground">{infraction.details.detail}</p>
+                                  <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
+                                    <span>Constaté : <span className="font-mono font-semibold text-foreground">{infraction.details.valeur_constatee}h</span></span>
+                                    <span>Limite : <span className="font-mono font-semibold text-foreground">{infraction.details.limite_reglementaire}h</span></span>
+                                    <span>Amende : <span className="font-mono font-semibold text-foreground">{infraction.details.amende_min}€ – {infraction.details.amende_max}€</span></span>
+                                    <span>{infraction.details.article_loi}</span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

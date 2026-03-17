@@ -52,7 +52,8 @@ export function WeeklyTab({ infractions }: WeeklyTabProps) {
       weekData.days.get(dayKey).push({
         type: inf.type,
         severity: inf.severity,
-        gravity: inf.severity === 'critical' ? '5eme' : inf.severity === 'high' ? '4eme' : inf.severity === 'medium' ? '3eme' : '3eme'
+        gravity: inf.details?.gravite || (inf.severity === 'critical' ? '5eme' : inf.severity === 'high' ? '4eme' : inf.severity === 'medium' ? '3eme' : '3eme'),
+        details: inf.details || null,
       })
     })
 
@@ -129,9 +130,18 @@ export function WeeklyTab({ infractions }: WeeklyTabProps) {
                       </div>
                       <div className="p-3 space-y-1.5">
                         {day.infractions.map((inf: any, i: number) => (
-                          <div key={i} className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">{inf.type}</span>
-                            <GravityBadge gravity={inf.gravity} />
+                          <div key={i} className="space-y-1 text-sm py-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium text-foreground">{inf.type}</span>
+                              <GravityBadge gravity={inf.gravity} />
+                            </div>
+                            {inf.details && (
+                              <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
+                                <span>Constaté : <span className="font-mono font-semibold text-foreground">{inf.details.valeur_constatee}h</span></span>
+                                <span>Limite : <span className="font-mono font-semibold text-foreground">{inf.details.limite_reglementaire}h</span></span>
+                                <span>{inf.details.article_loi}</span>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

@@ -100,6 +100,7 @@ export default function AnalysisDetailPage() {
                         date: inf.date,
                         type: inf.type,
                         severity: inf.severity,
+                        details: inf.details || null,
                       })),
                     })
                   }}
