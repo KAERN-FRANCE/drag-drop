@@ -90,7 +90,96 @@ function getISOWeekYear(dateKey: string): number {
   return date.getUTCFullYear()
 }
 
+// ── Gravité EU 2016/403 Annexe III ──────────────────────
+
+type GravityResult = { gravite: GraviteInfraction; amende_min: number; amende_max: number }
+
+const AMENDE: Record<GraviteInfraction, [number, number]> = {
+  '3eme': [90, 135],
+  '4eme': [135, 750],
+  '5eme': [1500, 3000],
+  'delit': [3750, 7500],
+}
+
+/**
+ * Retourne la gravité selon EU 2016/403 Annexe III.
+ * @param type  Clé du type d'infraction
+ * @param value Valeur constatée (heures)
+ */
+function getGravity(type: string, value: number): GravityResult {
+  let g: GraviteInfraction = '4eme'
+
+  switch (type) {
+    case 'COND_JOUR':
+      // h de conduite journalière
+      if (value > 13)       g = 'delit'
+      else if (value > 11.5) g = '5eme'
+      else if (value > 11)   g = '4eme'
+      else                    g = '3eme'  // > 10 à ≤ 11
+      break
+
+    case 'REPOS_JOUR':
+      // h de repos journalier réel
+      if (value < 7)        g = 'delit'
+      else if (value < 8.5) g = '5eme'
+      else if (value < 10)  g = '4eme'
+      else                   g = '3eme'  // ≥ 10 à < 11
+      break
+
+    case 'PAUSE':
+      // h de conduite sans pause
+      if (value > 7.5)      g = 'delit'
+      else if (value > 6)   g = '5eme'
+      else if (value > 5.25) g = '4eme'
+      else                    g = '3eme'  // > 4.5 à ≤ 5.25
+      break
+
+    case 'COND_HEBDO':
+      // h de conduite hebdomadaire
+      if (value > 70)       g = 'delit'
+      else if (value > 64)  g = '5eme'
+      else if (value > 60)  g = '4eme'
+      else                   g = '3eme'  // > 56 à ≤ 60
+      break
+
+    case 'COND_2SEM':
+      // h de conduite bi-hebdomadaire
+      if (value > 105)      g = '5eme'
+      else if (value > 100) g = '4eme'
+      else                   g = '3eme'  // > 90 à ≤ 100
+      break
+
+    case 'REPOS_HEBDO':
+      // h de manque (shortfall) par rapport au minimum requis
+      if (value >= 12)      g = 'delit'
+      else if (value >= 9)  g = '5eme'
+      else if (value >= 3)  g = '4eme'
+      else                   g = '3eme'  // < 3h de manque
+      break
+
+    default:
+      g = '4eme'
+  }
+
+  const [amende_min, amende_max] = AMENDE[g]
+  return { gravite: g, amende_min, amende_max }
+}
+
 // ── Structures internes ───────────────────────────────
+
+interface QualifyingRest {
+  startTs: number
+  endTs: number
+  durationMin: number
+  type: 'normal' | 'reduced' | 'split'
+}
+
+interface WeeklyRestBlock {
+  startTs: number
+  endTs: number
+  durationMin: number
+  type: 'normal' | 'reduced'
+}
 
 interface DayData {
   drivingMinutes: number
@@ -207,6 +296,69 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
   const infractions: Infraction[] = []
 
   // ══════════════════════════════════════════════════
+  // 1b. Fusionner REST en blocs + repos qualifiants
+  //     (nécessaire pour amplitude et repos journalier)
+  // ══════════════════════════════════════════════════
+  interface RestBlock { startTs: number; endTs: number; durationMin: number }
+  const restBlocks: RestBlock[] = []
+
+  for (const act of sorted) {
+    if (act.type !== 'REST') continue
+    const s = new Date(act.start).getTime()
+    const e = new Date(act.end).getTime()
+    const last = restBlocks[restBlocks.length - 1]
+    if (last && s <= last.endTs + 60_000) {
+      last.endTs = Math.max(last.endTs, e)
+      last.durationMin = (last.endTs - last.startTs) / 60_000
+    } else {
+      restBlocks.push({ startTs: s, endTs: e, durationMin: (e - s) / 60_000 })
+    }
+  }
+
+  const DAILY_REST_MIN = 9 * 60 - 1
+  const DAILY_REST_NORMAL = 11 * 60 - 1
+  const SPLIT_FIRST_MIN = 3 * 60 - 1
+  const SPLIT_SECOND_MIN = 9 * 60 - 1
+
+  const qualifyingRests: QualifyingRest[] = []
+
+  for (let idx = 0; idx < restBlocks.length; idx++) {
+    const rb = restBlocks[idx]
+    if (rb.durationMin >= DAILY_REST_MIN) {
+      qualifyingRests.push({
+        startTs: rb.startTs, endTs: rb.endTs, durationMin: rb.durationMin,
+        type: rb.durationMin >= DAILY_REST_NORMAL ? 'normal' : 'reduced',
+      })
+    }
+  }
+
+  // Paires fractionnées 3h + 9h (Art. 8§2)
+  for (let idx = 0; idx < restBlocks.length; idx++) {
+    const rb = restBlocks[idx]
+    if (rb.durationMin >= SPLIT_FIRST_MIN && rb.durationMin < DAILY_REST_MIN) {
+      for (let j = idx + 1; j < restBlocks.length; j++) {
+        const rb2 = restBlocks[j]
+        if (rb2.durationMin >= SPLIT_SECOND_MIN) {
+          const gapH = (rb2.startTs - rb.endTs) / 3_600_000
+          if (gapH <= 24) {
+            const existingQR = qualifyingRests.find(
+              qr => qr.startTs === rb2.startTs && qr.endTs === rb2.endTs
+            )
+            if (existingQR) {
+              existingQR.startTs = rb.startTs
+              existingQR.durationMin = rb.durationMin + rb2.durationMin
+              existingQR.type = 'split'
+            }
+          }
+          break
+        }
+      }
+    }
+  }
+
+  qualifyingRests.sort((a, b) => a.startTs - b.startTs)
+
+  // ══════════════════════════════════════════════════
   // 2. Infractions journalières (groupées par semaine pour les exceptions)
   // ══════════════════════════════════════════════════
   for (const week of weekStats) {
@@ -217,13 +369,12 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       if (h > 10 + EPSILON) {
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_JOUR_9H')!
         const dep = h - 10
-        // MSI (5ème) si > 10h × 120% = 12h — Règl. 2016/403/UE
-        const grav: GraviteInfraction = dep > 2 ? '5eme' : '4eme'
+        const grav = getGravity('COND_JOUR', h)
         infractions.push({
           date: jour.dateLabel, type: 'Conduite journalière excessive', code: regle.code,
           detail: `${h.toFixed(2)}h de conduite (max 10h absolu, +${dep.toFixed(2)}h)`,
-          valeur_constatee: h, limite_reglementaire: 10, gravite: grav,
-          amende_min: grav === '5eme' ? 1500 : 135, amende_max: grav === '5eme' ? 3000 : 750,
+          valeur_constatee: h, limite_reglementaire: 10,
+          ...grav,
           article_loi: regle.article_loi,
         })
       }
@@ -239,118 +390,105 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       for (let i = 2; i < tries.length; i++) {
         const jour = tries[i]
         const h = jour.drivingMinutes / 60
+        const grav = getGravity('COND_JOUR', h)
         infractions.push({
           date: jour.dateLabel, type: 'Dépassement fréquence 10h', code: regle.code,
           detail: `${h.toFixed(2)}h (>9h autorisé 2 fois/semaine max, ceci est le ${i + 1}ème)`,
-          valeur_constatee: h, limite_reglementaire: 9, gravite: '4eme',
-          amende_min: 135, amende_max: 750, article_loi: regle.article_loi,
+          valeur_constatee: h, limite_reglementaire: 9,
+          ...grav,
+          article_loi: regle.article_loi,
         })
       }
     }
 
-    // ── Amplitude ──
+    // ── Amplitude — seuils basés sur le type de repos journalier ──
+    // CE 561/2006 : amplitude = 24h - repos journalier
+    //   Normal ≥11h → max 13h | Réduit ≥9h → max 15h | Fractionné 3h+9h → max 12h
     for (const jour of week.days) {
       const amp = jour.amplitudeMinutes / 60
-      if (amp > 14 + EPSILON) {
+      if (amp <= 12 + EPSILON) continue // ≤ 12h = toujours OK quel que soit le type de repos
+
+      // Déterminer le type de repos qui borne cette journée
+      const dayStartTs = getParisStartOfDayTs(jour.dateKey)
+      const dayEndTs = getParisStartOfDayTs(getNextDateKey(jour.dateKey))
+      const dayMidTs = (dayStartTs + dayEndTs) / 2
+
+      // Chercher le qualifying rest le plus proche de cette journée
+      let nearestRest: QualifyingRest | null = null
+      let minDist = Infinity
+      for (const qr of qualifyingRests) {
+        const dist = Math.min(Math.abs(qr.endTs - dayStartTs), Math.abs(qr.startTs - dayEndTs))
+        if (dist < minDist) {
+          minDist = dist
+          nearestRest = qr
+        }
+      }
+
+      // Déterminer le seuil d'amplitude
+      let ampLimit: number
+      if (!nearestRest || nearestRest.type === 'normal') {
+        ampLimit = 13 // repos normal ≥11h → 24h-11h = 13h
+      } else if (nearestRest.type === 'split') {
+        ampLimit = 12 // repos fractionné 3h+9h = 12h → 24h-12h = 12h
+      } else {
+        ampLimit = 15 // repos réduit ≥9h → 24h-9h = 15h
+      }
+
+      if (amp > ampLimit + EPSILON) {
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'AMPLITUDE_12H')!
         infractions.push({
           date: jour.dateLabel, type: 'Amplitude journalière excessive', code: regle.code,
-          detail: `${amp.toFixed(2)}h d'amplitude (max 14h absolu)`,
-          valeur_constatee: amp, limite_reglementaire: 14, gravite: '4eme',
-          amende_min: 135, amende_max: 750, article_loi: regle.article_loi,
+          detail: `${amp.toFixed(2)}h d'amplitude (max ${ampLimit}h avec repos ${nearestRest?.type || 'normal'})`,
+          valeur_constatee: amp, limite_reglementaire: ampLimit,
+          gravite: '4eme', amende_min: 135, amende_max: 750,
+          article_loi: regle.article_loi,
         })
-      } else if (amp > 12 + EPSILON) {
-        const conduiteOk = jour.drivingMinutes <= (10 + EPSILON) * 60
-        const reposOk    = jour.restMinutes === 0 || jour.restMinutes >= 9 * 60
-        if (!conduiteOk || !reposOk) {
-          const regle = REGLES_INFRACTIONS.find(r => r.code === 'AMPLITUDE_12H')!
-          const raisons: string[] = []
-          if (!conduiteOk) raisons.push('conduite >10h')
-          if (!reposOk)    raisons.push('repos <9h')
-          infractions.push({
-            date: jour.dateLabel, type: 'Amplitude journalière excessive', code: regle.code,
-            detail: `${amp.toFixed(2)}h d'amplitude (12h max, ext. 14h refusée : ${raisons.join(' et ')})`,
-            valeur_constatee: amp, limite_reglementaire: 12, gravite: '4eme',
-            amende_min: 135, amende_max: 750, article_loi: regle.article_loi,
-          })
-        }
       }
     }
   }
 
   // ══════════════════════════════════════════════════
-  // 2b. Repos journalier — basé sur les blocs de repos CONSÉCUTIFS
-  //     CE 561/2006 Art. 8 : le repos journalier est une période
-  //     CONSÉCUTIVE de repos ≥ 9h (réduit) ou ≥ 11h (normal).
-  //     On ne somme PAS le repos par jour calendaire (un repos de
-  //     22h-7h = 9h ne doit pas être découpé entre 2 jours).
+  // 2b. Repos journalier — vérification par périodes de travail
   // ══════════════════════════════════════════════════
 
-  // Fusionner les activités REST consécutives en blocs
-  interface RestBlock { startTs: number; endTs: number; durationMin: number }
-  const restBlocks: RestBlock[] = []
-
-  for (const act of sorted) {
-    if (act.type !== 'REST') continue
-    const s = new Date(act.start).getTime()
-    const e = new Date(act.end).getTime()
-    const last = restBlocks[restBlocks.length - 1]
-    // Fusionner si contigu (tolérance 1 min pour les arrondis)
-    if (last && s <= last.endTs + 60_000) {
-      last.endTs = Math.max(last.endTs, e)
-      last.durationMin = (last.endTs - last.startTs) / 60_000
-    } else {
-      restBlocks.push({ startTs: s, endTs: e, durationMin: (e - s) / 60_000 })
-    }
-  }
-
-  const DAILY_REST_MIN_MIN = 9 * 60 - 1 // 9h avec 1 min de tolérance
-
-  // Repos qualifiants : blocs consécutifs ≥ 9h
-  const qualifyingRests = restBlocks.filter(rb => rb.durationMin >= DAILY_REST_MIN_MIN)
-
   // Déterminer les périodes de travail (gaps entre repos qualifiants)
-  interface WorkGap { afterRestEnd: number; beforeRestStart: number }
+
+  interface WorkGap { afterRestEnd: number; beforeRestStart: number; restType: 'normal' | 'reduced' | 'split' }
   const gaps: WorkGap[] = []
 
   if (qualifyingRests.length === 0 && sorted.length > 1) {
-    // Aucun repos qualifiant — toute la période est un gap
     gaps.push({
       afterRestEnd: new Date(sorted[0].start).getTime(),
       beforeRestStart: new Date(sorted[sorted.length - 1].end).getTime(),
+      restType: 'normal',
     })
   } else {
-    // Gaps entre repos qualifiants consécutifs
     for (let i = 0; i < qualifyingRests.length - 1; i++) {
       gaps.push({
         afterRestEnd: qualifyingRests[i].endTs,
         beforeRestStart: qualifyingRests[i + 1].startTs,
+        restType: qualifyingRests[i + 1].type, // le repos qui termine cette période
       })
     }
-    // Note : on ignore le gap avant le 1er repos et après le dernier
-    // (données incomplètes, pas de faux positifs)
   }
 
-  // Pour chaque gap : combien de repos journaliers étaient attendus ?
+  // Pour chaque gap > 24h : repos journalier insuffisant
   for (const gap of gaps) {
     const gapDurationH = (gap.beforeRestStart - gap.afterRestEnd) / 3_600_000
     const expectedRests = Math.floor(gapDurationH / 24)
-    if (expectedRests < 1) continue // Gap < 24h, pas de repos attendu
+    if (expectedRests < 1) continue
 
-    // Trouver les blocs de repos dans ce gap, triés par durée décroissante
     const blocksInGap = restBlocks
       .filter(rb => rb.startTs >= gap.afterRestEnd && rb.endTs <= gap.beforeRestStart)
       .sort((a, b) => b.durationMin - a.durationMin)
 
-    // Vérifier que les N meilleurs blocs satisfont le repos minimum
     for (let i = 0; i < expectedRests; i++) {
       const actualRestMin = blocksInGap[i]?.durationMin ?? 0
 
-      if (actualRestMin < DAILY_REST_MIN_MIN) {
+      if (actualRestMin < DAILY_REST_MIN) {
         const h = actualRestMin / 60
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
-        const grav: GraviteInfraction = h < 7 ? '5eme' : '4eme'
-        // Date estimée : chaque 24h depuis le début du gap
+        const grav = getGravity('REPOS_JOUR', h)
         const estimatedTs = gap.afterRestEnd + (i + 1) * 24 * 3_600_000
         const dateKey = extractLocalDate(
           new Date(Math.min(estimatedTs, gap.beforeRestStart)).toISOString()
@@ -362,42 +500,7 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
           detail: `${h.toFixed(2)}h de repos consécutif (min 9h)`,
           valeur_constatee: h,
           limite_reglementaire: 9,
-          gravite: grav,
-          amende_min: grav === '5eme' ? 1500 : 135,
-          amende_max: grav === '5eme' ? 3000 : 750,
-          article_loi: regle.article_loi,
-        })
-      }
-    }
-  }
-
-  // ── Repos réduit 9-11h : max 3 fois par semaine ISO ──
-  for (const week of weekStats) {
-    const weekStartTs = getParisStartOfDayTs(week.days[0].dateKey)
-    const weekEndTs = getParisStartOfDayTs(getNextDateKey(week.days[week.days.length - 1].dateKey))
-
-    const reducedRestsInWeek = qualifyingRests.filter(qr =>
-      qr.startTs >= weekStartTs && qr.startTs < weekEndTs
-      && qr.durationMin < 11 * 60
-    )
-
-    if (reducedRestsInWeek.length > 3) {
-      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
-      const sorted2 = [...reducedRestsInWeek].sort((a, b) => a.durationMin - b.durationMin)
-      for (let i = 3; i < sorted2.length; i++) {
-        const rb = sorted2[i]
-        const h = rb.durationMin / 60
-        const dateKey = extractLocalDate(new Date(rb.startTs).toISOString())
-        infractions.push({
-          date: formatDateFr(dateKey),
-          type: 'Repos journalier réduit excessif',
-          code: regle.code,
-          detail: `${h.toFixed(2)}h (repos réduit 9-11h autorisé 3 fois/semaine max, ceci est le ${i + 1}ème)`,
-          valeur_constatee: h,
-          limite_reglementaire: 11,
-          gravite: '4eme',
-          amende_min: 135,
-          amende_max: 750,
+          ...grav,
           article_loi: regle.article_loi,
         })
       }
@@ -405,34 +508,152 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
   }
 
   // ══════════════════════════════════════════════════
-  // 3. Infractions hebdomadaires
+  // 2c. Repos hebdomadaire — blocs consécutifs ≥ 24h
+  //     CE 561/2006 Art. 8§6 :
+  //     - Normal : ≥ 45h consécutives
+  //     - Réduit : ≥ 24h (max 2 réduits consécutifs)
+  //     - Doit commencer ≤ 6×24h après fin du précédent
+  // ══════════════════════════════════════════════════
+  const WEEKLY_REST_REDUCED_MIN = 24 * 60 - 1  // 24h - 1min tolérance
+  const WEEKLY_REST_NORMAL_MIN = 45 * 60 - 1   // 45h - 1min tolérance
+
+  const weeklyRests: WeeklyRestBlock[] = restBlocks
+    .filter(rb => rb.durationMin >= WEEKLY_REST_REDUCED_MIN)
+    .map(rb => ({
+      startTs: rb.startTs,
+      endTs: rb.endTs,
+      durationMin: rb.durationMin,
+      type: rb.durationMin >= WEEKLY_REST_NORMAL_MIN ? 'normal' as const : 'reduced' as const,
+    }))
+
+  // Règle 6×24h : gap entre repos hebdomadaires consécutifs ≤ 144h
+  for (let i = 0; i < weeklyRests.length - 1; i++) {
+    const gapH = (weeklyRests[i + 1].startTs - weeklyRests[i].endTs) / 3_600_000
+    if (gapH > 144 + EPSILON) {
+      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_HEBDO_45H')!
+      const shortfall = gapH - 144
+      const grav = getGravity('REPOS_HEBDO', shortfall)
+      const dateKey = extractLocalDate(new Date(weeklyRests[i].endTs + 144 * 3_600_000).toISOString())
+      infractions.push({
+        date: formatDateFr(dateKey),
+        type: 'Repos hebdomadaire manquant (6×24h)',
+        code: regle.code,
+        detail: `${gapH.toFixed(0)}h sans repos hebdomadaire (max 144h entre deux repos)`,
+        valeur_constatee: gapH,
+        limite_reglementaire: 144,
+        ...grav,
+        article_loi: regle.article_loi,
+      })
+    }
+  }
+
+  // Max 2 repos hebdomadaires réduits consécutifs
+  let consecutiveReduced = 0
+  for (const wr of weeklyRests) {
+    if (wr.type === 'reduced') {
+      consecutiveReduced++
+      if (consecutiveReduced > 2) {
+        const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_HEBDO_45H')!
+        const shortfall = 45 - wr.durationMin / 60
+        const grav = getGravity('REPOS_HEBDO', shortfall)
+        const dateKey = extractLocalDate(new Date(wr.startTs).toISOString())
+        infractions.push({
+          date: formatDateFr(dateKey),
+          type: 'Repos hebdomadaire réduit excessif',
+          code: regle.code,
+          detail: `${(wr.durationMin / 60).toFixed(2)}h (3ème repos réduit consécutif, max 2 autorisés)`,
+          valeur_constatee: wr.durationMin / 60,
+          limite_reglementaire: 45,
+          ...grav,
+          article_loi: regle.article_loi,
+        })
+      }
+    } else {
+      consecutiveReduced = 0
+    }
+  }
+
+  // ── Repos réduit journalier : max 3 entre deux repos hebdomadaires ──
+  // CE 561/2006 Art. 8§4
+  const countReducedBetween = (startTs: number, endTs: number) => {
+    return qualifyingRests.filter(qr =>
+      qr.startTs >= startTs && qr.endTs <= endTs
+      && qr.durationMin < DAILY_REST_NORMAL
+      && qr.durationMin >= DAILY_REST_MIN
+      && qr.durationMin < WEEKLY_REST_REDUCED_MIN // exclure les repos hebdo
+    )
+  }
+
+  if (weeklyRests.length >= 2) {
+    for (let i = 0; i < weeklyRests.length - 1; i++) {
+      const periodStart = weeklyRests[i].endTs
+      const periodEnd = weeklyRests[i + 1].startTs
+      const reducedInPeriod = countReducedBetween(periodStart, periodEnd)
+
+      if (reducedInPeriod.length > 3) {
+        const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
+        const sortedReduced = [...reducedInPeriod].sort((a, b) => a.durationMin - b.durationMin)
+        for (let j = 3; j < sortedReduced.length; j++) {
+          const qr = sortedReduced[j]
+          const h = qr.durationMin / 60
+          const grav = getGravity('REPOS_JOUR', h)
+          const dateKey = extractLocalDate(new Date(qr.startTs).toISOString())
+          infractions.push({
+            date: formatDateFr(dateKey),
+            type: 'Repos journalier réduit excessif',
+            code: regle.code,
+            detail: `${h.toFixed(2)}h (repos réduit autorisé 3 fois entre repos hebdo, ceci est le ${j + 1}ème)`,
+            valeur_constatee: h,
+            limite_reglementaire: 11,
+            ...grav,
+            article_loi: regle.article_loi,
+          })
+        }
+      }
+    }
+  } else if (weeklyRests.length <= 1) {
+    // Données courtes : compter sur toute la période
+    const allReduced = qualifyingRests.filter(qr =>
+      qr.durationMin < DAILY_REST_NORMAL
+      && qr.durationMin >= DAILY_REST_MIN
+      && qr.durationMin < WEEKLY_REST_REDUCED_MIN
+    )
+    if (allReduced.length > 3) {
+      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
+      const sortedReduced = [...allReduced].sort((a, b) => a.durationMin - b.durationMin)
+      for (let j = 3; j < sortedReduced.length; j++) {
+        const qr = sortedReduced[j]
+        const h = qr.durationMin / 60
+        const grav = getGravity('REPOS_JOUR', h)
+        const dateKey = extractLocalDate(new Date(qr.startTs).toISOString())
+        infractions.push({
+          date: formatDateFr(dateKey),
+          type: 'Repos journalier réduit excessif',
+          code: regle.code,
+          detail: `${h.toFixed(2)}h (repos réduit autorisé 3 fois entre repos hebdo, ceci est le ${j + 1}ème)`,
+          valeur_constatee: h,
+          limite_reglementaire: 11,
+          ...grav,
+          article_loi: regle.article_loi,
+        })
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // 3. Infractions hebdomadaires — conduite
   // ══════════════════════════════════════════════════
   for (const week of weekStats) {
     const conduiteH = week.drivingMinutes / 60
     if (conduiteH > 56 + EPSILON) {
       const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_HEBDO_56H')!
       const dep = conduiteH - 56
-      // MSI (5ème) si > 60h (maximum absolu hebdomadaire) — Règl. 2016/403/UE
-      const grav: GraviteInfraction = dep > 4 ? '5eme' : '4eme'
+      const grav = getGravity('COND_HEBDO', conduiteH)
       infractions.push({
         date: week.weekLabel, type: 'Conduite hebdomadaire excessive', code: regle.code,
         detail: `${conduiteH.toFixed(2)}h (max 56h, +${dep.toFixed(2)}h)`,
-        valeur_constatee: conduiteH, limite_reglementaire: 56, gravite: grav,
-        amende_min: grav === '5eme' ? 1500 : 135, amende_max: grav === '5eme' ? 3000 : 750,
-        article_loi: regle.article_loi,
-      })
-    }
-
-    const reposH = week.restMinutes / 60
-    if (reposH > 0 && reposH < 45) {
-      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_HEBDO_45H')!
-      // MSI (5ème) si < 24h (repos réduit sous le minimum absolu) — Règl. 2016/403/UE
-      const grav: GraviteInfraction = reposH < 24 ? '5eme' : '4eme'
-      infractions.push({
-        date: week.weekLabel, type: 'Repos hebdomadaire insuffisant', code: regle.code,
-        detail: `${reposH.toFixed(2)}h de repos (min 45h, réduction 24h avec compensation)`,
-        valeur_constatee: reposH, limite_reglementaire: 45, gravite: grav,
-        amende_min: grav === '5eme' ? 1500 : 135, amende_max: grav === '5eme' ? 3000 : 750,
+        valeur_constatee: conduiteH, limite_reglementaire: 56,
+        ...grav,
         article_loi: regle.article_loi,
       })
     }
@@ -444,16 +665,15 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
   for (let i = 0; i < weekStats.length - 1; i++) {
     const w1 = weekStats[i], w2 = weekStats[i + 1]
     const total = (w1.drivingMinutes + w2.drivingMinutes) / 60
-    if (total > 90) {
+    if (total > 90 + EPSILON) {
       const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_2SEM_90H')!
-      const dep  = total - 90
-      // MSI (5ème) si > 100h (maximum absolu bi-hebdomadaire) — Règl. 2016/403/UE
-      const grav: GraviteInfraction = dep > 10 ? '5eme' : '4eme'
+      const dep = total - 90
+      const grav = getGravity('COND_2SEM', total)
       infractions.push({
         date: `${w1.weekLabel} + ${w2.weekLabel}`, type: 'Conduite 2 semaines excessive', code: regle.code,
         detail: `${total.toFixed(2)}h sur 2 semaines (max 90h, +${dep.toFixed(2)}h)`,
-        valeur_constatee: total, limite_reglementaire: 90, gravite: grav,
-        amende_min: grav === '5eme' ? 1500 : 135, amende_max: grav === '5eme' ? 3000 : 750,
+        valeur_constatee: total, limite_reglementaire: 90,
+        ...grav,
         article_loi: regle.article_loi,
       })
     }
@@ -481,14 +701,17 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
 
       if (conducteSinceBreak > PAUSE_LIMIT) {
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'PAUSE_4H30')!
+        const h = conducteSinceBreak / 60
+        const grav = getGravity('PAUSE', h)
         const dateLabel = segmentStart
           ? formatDateFr(extractLocalDate(segmentStart))
           : formatDateFr(extractLocalDate(act.start))
         infractions.push({
           date: dateLabel, type: 'Pause 4h30 manquante', code: regle.code,
-          detail: `${(conducteSinceBreak / 60).toFixed(2)}h de conduite sans pause réglementaire`,
-          valeur_constatee: conducteSinceBreak / 60, limite_reglementaire: 4.5, gravite: '4eme',
-          amende_min: 135, amende_max: 750, article_loi: regle.article_loi,
+          detail: `${h.toFixed(2)}h de conduite sans pause réglementaire`,
+          valeur_constatee: h, limite_reglementaire: 4.5,
+          ...grav,
+          article_loi: regle.article_loi,
         })
         conducteSinceBreak = 0
         breakPhase = 0
@@ -503,22 +726,16 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
 
       if (breakPhase === 0) {
         if (dur >= BREAK_FULL) {
-          // Pause unique complète (≥ 45 min)
           conducteSinceBreak = 0; breakPhase = 0; firstBreakMin = 0; segmentStart = null
         } else if (dur >= BREAK1_MIN) {
-          // 1ère partie d'une pause fractionnée (≥ 15 min)
           breakPhase = 1; firstBreakMin = dur
         }
       } else {
-        // On attend la 2ème partie (doit être ≥ 30 min indépendamment)
         if (dur >= BREAK2_MIN) {
-          // 2ème partie valide
           conducteSinceBreak = 0; breakPhase = 0; firstBreakMin = 0; segmentStart = null
         } else if (dur >= BREAK1_MIN) {
-          // Ce repos ≥ 15 min peut servir de nouvelle 1ère partie
           firstBreakMin = dur
         }
-        // < 15 min : ignoré, on continue d'attendre
       }
     }
   }
