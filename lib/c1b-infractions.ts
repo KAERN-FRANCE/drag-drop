@@ -248,41 +248,6 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       }
     }
 
-    // ── Repos < 9h (absolu) ──
-    for (const jour of week.days) {
-      if (jour.restMinutes === 0) continue
-      if (jour.restMinutes < 9 * 60) {
-        const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
-        const h = jour.restMinutes / 60
-        // MSI (5ème) si < 7h (réduction > 2h sous 9h) — Règl. 2016/403/UE
-        const grav: GraviteInfraction = h < 7 ? '5eme' : '4eme'
-        infractions.push({
-          date: jour.dateLabel, type: 'Repos journalier insuffisant', code: regle.code,
-          detail: `${h.toFixed(2)}h de repos (min 9h absolu)`,
-          valeur_constatee: h, limite_reglementaire: 9, gravite: grav,
-          amende_min: grav === '5eme' ? 1500 : 135, amende_max: grav === '5eme' ? 3000 : 750,
-          article_loi: regle.article_loi,
-        })
-      }
-    }
-
-    // ── Repos 9h-11h : max 3 fois/semaine ──
-    const joursReposReduit = week.days.filter(d => d.restMinutes >= 9 * 60 && d.restMinutes < 11 * 60)
-    if (joursReposReduit.length > 3) {
-      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
-      const tries = [...joursReposReduit].sort((a, b) => a.restMinutes - b.restMinutes)
-      for (let i = 3; i < tries.length; i++) {
-        const jour = tries[i]
-        const h = jour.restMinutes / 60
-        infractions.push({
-          date: jour.dateLabel, type: 'Repos journalier réduit excessif', code: regle.code,
-          detail: `${h.toFixed(2)}h (repos réduit 9-11h autorisé 3 fois/semaine max, ceci est le ${i + 1}ème)`,
-          valeur_constatee: h, limite_reglementaire: 11, gravite: '4eme',
-          amende_min: 135, amende_max: 750, article_loi: regle.article_loi,
-        })
-      }
-    }
-
     // ── Amplitude ──
     for (const jour of week.days) {
       const amp = jour.amplitudeMinutes / 60
@@ -309,6 +274,132 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
             amende_min: 135, amende_max: 750, article_loi: regle.article_loi,
           })
         }
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // 2b. Repos journalier — basé sur les blocs de repos CONSÉCUTIFS
+  //     CE 561/2006 Art. 8 : le repos journalier est une période
+  //     CONSÉCUTIVE de repos ≥ 9h (réduit) ou ≥ 11h (normal).
+  //     On ne somme PAS le repos par jour calendaire (un repos de
+  //     22h-7h = 9h ne doit pas être découpé entre 2 jours).
+  // ══════════════════════════════════════════════════
+
+  // Fusionner les activités REST consécutives en blocs
+  interface RestBlock { startTs: number; endTs: number; durationMin: number }
+  const restBlocks: RestBlock[] = []
+
+  for (const act of sorted) {
+    if (act.type !== 'REST') continue
+    const s = new Date(act.start).getTime()
+    const e = new Date(act.end).getTime()
+    const last = restBlocks[restBlocks.length - 1]
+    // Fusionner si contigu (tolérance 1 min pour les arrondis)
+    if (last && s <= last.endTs + 60_000) {
+      last.endTs = Math.max(last.endTs, e)
+      last.durationMin = (last.endTs - last.startTs) / 60_000
+    } else {
+      restBlocks.push({ startTs: s, endTs: e, durationMin: (e - s) / 60_000 })
+    }
+  }
+
+  const DAILY_REST_MIN_MIN = 9 * 60 - 1 // 9h avec 1 min de tolérance
+
+  // Repos qualifiants : blocs consécutifs ≥ 9h
+  const qualifyingRests = restBlocks.filter(rb => rb.durationMin >= DAILY_REST_MIN_MIN)
+
+  // Déterminer les périodes de travail (gaps entre repos qualifiants)
+  interface WorkGap { afterRestEnd: number; beforeRestStart: number }
+  const gaps: WorkGap[] = []
+
+  if (qualifyingRests.length === 0 && sorted.length > 1) {
+    // Aucun repos qualifiant — toute la période est un gap
+    gaps.push({
+      afterRestEnd: new Date(sorted[0].start).getTime(),
+      beforeRestStart: new Date(sorted[sorted.length - 1].end).getTime(),
+    })
+  } else {
+    // Gaps entre repos qualifiants consécutifs
+    for (let i = 0; i < qualifyingRests.length - 1; i++) {
+      gaps.push({
+        afterRestEnd: qualifyingRests[i].endTs,
+        beforeRestStart: qualifyingRests[i + 1].startTs,
+      })
+    }
+    // Note : on ignore le gap avant le 1er repos et après le dernier
+    // (données incomplètes, pas de faux positifs)
+  }
+
+  // Pour chaque gap : combien de repos journaliers étaient attendus ?
+  for (const gap of gaps) {
+    const gapDurationH = (gap.beforeRestStart - gap.afterRestEnd) / 3_600_000
+    const expectedRests = Math.floor(gapDurationH / 24)
+    if (expectedRests < 1) continue // Gap < 24h, pas de repos attendu
+
+    // Trouver les blocs de repos dans ce gap, triés par durée décroissante
+    const blocksInGap = restBlocks
+      .filter(rb => rb.startTs >= gap.afterRestEnd && rb.endTs <= gap.beforeRestStart)
+      .sort((a, b) => b.durationMin - a.durationMin)
+
+    // Vérifier que les N meilleurs blocs satisfont le repos minimum
+    for (let i = 0; i < expectedRests; i++) {
+      const actualRestMin = blocksInGap[i]?.durationMin ?? 0
+
+      if (actualRestMin < DAILY_REST_MIN_MIN) {
+        const h = actualRestMin / 60
+        const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
+        const grav: GraviteInfraction = h < 7 ? '5eme' : '4eme'
+        // Date estimée : chaque 24h depuis le début du gap
+        const estimatedTs = gap.afterRestEnd + (i + 1) * 24 * 3_600_000
+        const dateKey = extractLocalDate(
+          new Date(Math.min(estimatedTs, gap.beforeRestStart)).toISOString()
+        )
+        infractions.push({
+          date: formatDateFr(dateKey),
+          type: 'Repos journalier insuffisant',
+          code: regle.code,
+          detail: `${h.toFixed(2)}h de repos consécutif (min 9h)`,
+          valeur_constatee: h,
+          limite_reglementaire: 9,
+          gravite: grav,
+          amende_min: grav === '5eme' ? 1500 : 135,
+          amende_max: grav === '5eme' ? 3000 : 750,
+          article_loi: regle.article_loi,
+        })
+      }
+    }
+  }
+
+  // ── Repos réduit 9-11h : max 3 fois par semaine ISO ──
+  for (const week of weekStats) {
+    const weekStartTs = getParisStartOfDayTs(week.days[0].dateKey)
+    const weekEndTs = getParisStartOfDayTs(getNextDateKey(week.days[week.days.length - 1].dateKey))
+
+    const reducedRestsInWeek = qualifyingRests.filter(qr =>
+      qr.startTs >= weekStartTs && qr.startTs < weekEndTs
+      && qr.durationMin < 11 * 60
+    )
+
+    if (reducedRestsInWeek.length > 3) {
+      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
+      const sorted2 = [...reducedRestsInWeek].sort((a, b) => a.durationMin - b.durationMin)
+      for (let i = 3; i < sorted2.length; i++) {
+        const rb = sorted2[i]
+        const h = rb.durationMin / 60
+        const dateKey = extractLocalDate(new Date(rb.startTs).toISOString())
+        infractions.push({
+          date: formatDateFr(dateKey),
+          type: 'Repos journalier réduit excessif',
+          code: regle.code,
+          detail: `${h.toFixed(2)}h (repos réduit 9-11h autorisé 3 fois/semaine max, ceci est le ${i + 1}ème)`,
+          valeur_constatee: h,
+          limite_reglementaire: 11,
+          gravite: '4eme',
+          amende_min: 135,
+          amende_max: 750,
+          article_loi: regle.article_loi,
+        })
       }
     }
   }

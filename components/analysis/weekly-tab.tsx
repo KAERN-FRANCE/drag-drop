@@ -137,8 +137,8 @@ export function WeeklyTab({ infractions }: WeeklyTabProps) {
                             </div>
                             {inf.details && (
                               <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
-                                <span>Constaté : <span className="font-mono font-semibold text-foreground">{inf.details.valeur_constatee}h</span></span>
-                                <span>Limite : <span className="font-mono font-semibold text-foreground">{inf.details.limite_reglementaire}h</span></span>
+                                <span>Constaté : <span className="font-mono font-semibold text-foreground">{typeof inf.details.valeur_constatee === 'number' ? inf.details.valeur_constatee.toFixed(2) : inf.details.valeur_constatee}h</span></span>
+                                <span>Limite : <span className="font-mono font-semibold text-foreground">{typeof inf.details.limite_reglementaire === 'number' ? inf.details.limite_reglementaire.toFixed(2) : inf.details.limite_reglementaire}h</span></span>
                                 <span>{inf.details.article_loi}</span>
                               </div>
                             )}

@@ -131,8 +131,8 @@ export function DailyTab({ infractions }: DailyTabProps) {
                                 <div className="mt-1.5 space-y-1">
                                   <p className="text-sm text-foreground">{infraction.details.detail}</p>
                                   <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
-                                    <span>Constaté : <span className="font-mono font-semibold text-foreground">{infraction.details.valeur_constatee}h</span></span>
-                                    <span>Limite : <span className="font-mono font-semibold text-foreground">{infraction.details.limite_reglementaire}h</span></span>
+                                    <span>Constaté : <span className="font-mono font-semibold text-foreground">{typeof infraction.details.valeur_constatee === 'number' ? infraction.details.valeur_constatee.toFixed(2) : infraction.details.valeur_constatee}h</span></span>
+                                    <span>Limite : <span className="font-mono font-semibold text-foreground">{typeof infraction.details.limite_reglementaire === 'number' ? infraction.details.limite_reglementaire.toFixed(2) : infraction.details.limite_reglementaire}h</span></span>
                                     <span>Amende : <span className="font-mono font-semibold text-foreground">{infraction.details.amende_min}€ – {infraction.details.amende_max}€</span></span>
                                     <span>{infraction.details.article_loi}</span>
                                   </div>
