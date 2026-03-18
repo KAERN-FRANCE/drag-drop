@@ -67,7 +67,28 @@ export default function SettingsPage() {
       }
     }
     fetchData()
+
+    // Load thresholds from localStorage
+    const savedThresholds = localStorage.getItem('tachoCompliance_thresholds')
+    if (savedThresholds) {
+      try {
+        const parsed = JSON.parse(savedThresholds)
+        setThresholds(parsed.thresholds || thresholds)
+        setUseRegulatory(parsed.useRegulatory ?? true)
+      } catch {}
+    }
   }, [])
+
+  const [thresholdsSaved, setThresholdsSaved] = useState(false)
+
+  const handleSaveThresholds = () => {
+    localStorage.setItem('tachoCompliance_thresholds', JSON.stringify({
+      thresholds,
+      useRegulatory,
+    }))
+    setThresholdsSaved(true)
+    setTimeout(() => setThresholdsSaved(false), 2000)
+  }
 
   const handleSaveCompany = async () => {
     setSaving(true)
@@ -267,7 +288,16 @@ export default function SettingsPage() {
                         </>
                       )}
 
-                      <Button>Sauvegarder les seuils</Button>
+                      <Button onClick={handleSaveThresholds}>
+                        {thresholdsSaved ? (
+                          <>
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            Enregistré !
+                          </>
+                        ) : (
+                          "Sauvegarder les seuils"
+                        )}
+                      </Button>
                     </CardContent>
                   </Card>
                 )}

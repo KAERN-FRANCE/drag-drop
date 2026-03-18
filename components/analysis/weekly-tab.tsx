@@ -52,14 +52,14 @@ export function WeeklyTab({ infractions }: WeeklyTabProps) {
       weekData.days.get(dayKey).push({
         type: inf.type,
         severity: inf.severity,
-        gravity: inf.details?.gravite || (inf.severity === 'critical' ? '5eme' : inf.severity === 'high' ? '4eme' : inf.severity === 'medium' ? '3eme' : '3eme'),
+        gravity: inf.details?.gravite || (inf.severity === 'critical' ? 'delit' : inf.severity === 'high' ? '5eme' : inf.severity === 'medium' ? '4eme' : '3eme'),
         details: inf.details || null,
       })
     })
 
     return Array.from(grouped.values()).map(week => ({
       ...week,
-      days: Array.from(week.days.entries()).map(([date, infs]: [string, any[]]) => ({
+      days: Array.from(week.days.entries() as IterableIterator<[string, any[]]>).map(([date, infs]) => ({
         date,
         infractions: infs,
       }))

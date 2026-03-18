@@ -130,7 +130,8 @@ export function detecterInfractions(
             if (!regle) continue;
 
             const depassement = journee.conduite_heures - 10;
-            const gravite: GraviteInfraction = depassement > 1 ? '5eme' : '4eme';
+            // MSI (5ème) si > 12h (10h + 2h) — Règl. 2016/403/UE
+            const gravite: GraviteInfraction = depassement > 2 ? '5eme' : '4eme';
 
             infractions.push({
                 date: journee.date,
@@ -151,7 +152,8 @@ export function detecterInfractions(
             const regle = REGLES_INFRACTIONS.find((r) => r.code === 'REPOS_JOUR_11H');
             if (!regle) continue;
 
-            const gravite: GraviteInfraction = journee.repos_heures < 6 ? '5eme' : '4eme';
+            // MSI (5ème) si < 7h (réduction > 2h sous 9h) — Règl. 2016/403/UE
+            const gravite: GraviteInfraction = journee.repos_heures < 7 ? '5eme' : '4eme';
 
             infractions.push({
                 date: journee.date,
@@ -231,7 +233,8 @@ export function detecterInfractions(
             if (!regle) continue;
 
             const depassement = semaine.conduite_heures - 56;
-            const gravite: GraviteInfraction = depassement > 14 ? '5eme' : '4eme';
+            // MSI (5ème) si > 60h (max absolu hebdo) — Règl. 2016/403/UE
+            const gravite: GraviteInfraction = depassement > 4 ? '5eme' : '4eme';
 
             infractions.push({
                 date: semaine.date,
@@ -313,7 +316,8 @@ export function detecterInfractions(
             const regle = REGLES_INFRACTIONS.find((r) => r.code === 'REPOS_HEBDO_45H');
             if (!regle) continue;
 
-            const gravite: GraviteInfraction = semaine.repos_heures < 20 ? '5eme' : '4eme';
+            // MSI (5ème) si < 24h (sous le minimum de repos réduit) — Règl. 2016/403/UE
+            const gravite: GraviteInfraction = semaine.repos_heures < 24 ? '5eme' : '4eme';
 
             infractions.push({
                 date: semaine.date,
@@ -342,7 +346,8 @@ export function detecterInfractions(
             if (!regle) continue;
 
             const depassement = total2sem - 90;
-            const gravite: GraviteInfraction = depassement > 22.5 ? '5eme' : '4eme';
+            // MSI (5ème) si > 100h (max absolu bi-hebdo) — Règl. 2016/403/UE
+            const gravite: GraviteInfraction = depassement > 10 ? '5eme' : '4eme';
 
             infractions.push({
                 date: `${sem1.date} + ${sem2.date}`,

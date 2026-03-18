@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { auth } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -6,7 +7,10 @@ export const maxDuration = 120
 const C1B_API_URL = process.env.C1B_API_URL || 'http://localhost:8000'
 
 // GET pour tester la connectivité avec le parser
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
   try {
     const response = await fetch(`${C1B_API_URL}/`, { signal: AbortSignal.timeout(10000) })
     const data = await response.json()
@@ -17,6 +21,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
   console.log('[parse-c1b] POST reçu, C1B_API_URL:', C1B_API_URL)
 
   try {

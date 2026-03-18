@@ -134,6 +134,7 @@ export default function DriverAnalysisDetailPage() {
                   date: inf.date,
                   type: inf.type,
                   severity: inf.severity,
+                  details: inf.details || null,
                 })),
               })
             }}
@@ -246,6 +247,13 @@ export default function DriverAnalysisDetailPage() {
                             </Badge>
                           </div>
                         </div>
+                        {inf.details && (
+                          <div className="flex flex-wrap gap-x-5 gap-y-0.5 text-xs text-muted-foreground">
+                            <span>Constaté : <span className="font-mono font-semibold text-foreground">{inf.details.valeur_constatee}h</span></span>
+                            <span>Limite : <span className="font-mono font-semibold text-foreground">{inf.details.limite_reglementaire}h</span></span>
+                            <span>{inf.details.article_loi}</span>
+                          </div>
+                        )}
                         <div className="flex items-start gap-2 rounded-md bg-primary/5 p-2">
                           <Lightbulb className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
                           <p className="text-xs text-muted-foreground">{advice}</p>

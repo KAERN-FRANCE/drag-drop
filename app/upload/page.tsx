@@ -239,7 +239,7 @@ export default function UploadPage() {
       setUploadProgress(50)
 
       console.log("🔍 Début de l'analyse des données")
-      let journees, semaines, infractions, score
+      let journees: any, semaines: any, infractions: any, score: any
 
       try {
         const extracted = extraireDonneesAnalyse(lignesRaw)
@@ -292,12 +292,13 @@ export default function UploadPage() {
       let periodEnd: string
 
       if (fileIsC1B && c1bDriverResult) {
-        const drivingDates = (c1bDriverResult.activities || [])
-          .filter((a: any) => a.type === 'DRIVING' || a.type === 'WORK')
-          .map((a: any) => a.start.split('T')[0])
+        // Utiliser TOUTES les activités pour déterminer la période complète
+        const allDates: string[] = (c1bDriverResult.activities || [])
+          .map((a: any) => (a.start as string).split('T')[0])
           .sort()
-        periodStart = drivingDates[0] || parseFrenchDate(journees[0]?.date || '')
-        periodEnd = drivingDates[drivingDates.length - 1] || parseFrenchDate(journees[journees.length - 1]?.date || '')
+        const uniqueDates = [...new Set<string>(allDates)]
+        periodStart = uniqueDates[0] || parseFrenchDate(journees[0]?.date || '')
+        periodEnd = uniqueDates[uniqueDates.length - 1] || parseFrenchDate(journees[journees.length - 1]?.date || '')
       } else {
         periodStart = parseFrenchDate(journees[0]?.date || '')
         periodEnd = parseFrenchDate(journees[journees.length - 1]?.date || '')
@@ -308,7 +309,7 @@ export default function UploadPage() {
       setUploadProgress(85)
 
       // Appel unique à /api/analyses (crée analyse + infractions + recalcule score)
-      const infractionsData = infractions.map(inf => ({
+      const infractionsData = infractions.map((inf: any) => ({
         type: inf.type,
         date: parseFrenchDate(inf.date),
         severity: inf.gravite === 'delit' ? 'critical' : inf.gravite === '5eme' ? 'high' : inf.gravite === '4eme' ? 'medium' : 'low',

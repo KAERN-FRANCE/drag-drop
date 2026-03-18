@@ -5,12 +5,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { drivers, infractions, analyses } from '@/lib/schema'
-import { eq } from 'drizzle-orm'
+import { drivers, infractions, analyses, userCompanies } from '@/lib/schema'
+import { eq, and } from 'drizzle-orm'
 
 export async function DELETE(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  // Vérifier l'entreprise de l'utilisateur
+  const [uc] = await db
+    .select({ companyId: userCompanies.companyId })
+    .from(userCompanies)
+    .where(eq(userCompanies.userId, session.user.id))
+    .limit(1)
+  if (!uc) return NextResponse.json({ error: 'Entreprise non trouvée' }, { status: 403 })
 
   try {
     const { driverId } = await request.json()
@@ -20,12 +28,14 @@ export async function DELETE(request: NextRequest) {
 
     const id = Number(driverId)
 
-    // Récupérer le userId lié (pour supprimer le compte Better Auth si besoin)
+    // Vérifier que le chauffeur appartient à la même entreprise
     const [driver] = await db
-      .select({ userId: drivers.userId })
+      .select({ userId: drivers.userId, companyId: drivers.companyId })
       .from(drivers)
-      .where(eq(drivers.id, id))
+      .where(and(eq(drivers.id, id), eq(drivers.companyId, uc.companyId)))
       .limit(1)
+
+    if (!driver) return NextResponse.json({ error: 'Chauffeur non trouvé' }, { status: 404 })
 
     // Les infractions et analyses seront supprimées en cascade via FK
     // mais on les supprime explicitement pour s'assurer de l'ordre

@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { analyses, infractions, drivers } from '@/lib/schema'
+import { analyses, infractions, drivers, userCompanies } from '@/lib/schema'
 import { eq, and, gte } from 'drizzle-orm'
 
 const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low: 0 }
@@ -13,6 +13,14 @@ const penalites: Record<string, number> = { critical: 5, high: 2, medium: 1, low
 export async function DELETE(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers })
   if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+
+  // Vérifier l'entreprise de l'utilisateur
+  const [uc] = await db
+    .select({ companyId: userCompanies.companyId })
+    .from(userCompanies)
+    .where(eq(userCompanies.userId, session.user.id))
+    .limit(1)
+  if (!uc) return NextResponse.json({ error: 'Entreprise non trouvée' }, { status: 403 })
 
   try {
     const { analysisId } = await request.json()
@@ -22,12 +30,14 @@ export async function DELETE(request: NextRequest) {
 
     const id = Number(analysisId)
 
-    // Récupérer le driver_id avant suppression
+    // Vérifier que l'analyse appartient à la même entreprise
     const [analysis] = await db
       .select({ driverId: analyses.driverId })
       .from(analyses)
-      .where(eq(analyses.id, id))
+      .where(and(eq(analyses.id, id), eq(analyses.companyId, uc.companyId)))
       .limit(1)
+
+    if (!analysis) return NextResponse.json({ error: 'Analyse non trouvée' }, { status: 404 })
 
     const driverId = analysis?.driverId
 

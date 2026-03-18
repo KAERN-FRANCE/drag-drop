@@ -254,8 +254,8 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       if (jour.restMinutes < 9 * 60) {
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
         const h = jour.restMinutes / 60
-        // Tout repos < 9h est MSI (5ème) — Règl. 2016/403/UE (réduction de plus de 2h)
-        const grav: GraviteInfraction = '5eme'
+        // MSI (5ème) si < 7h (réduction > 2h sous 9h) — Règl. 2016/403/UE
+        const grav: GraviteInfraction = h < 7 ? '5eme' : '4eme'
         infractions.push({
           date: jour.dateLabel, type: 'Repos journalier insuffisant', code: regle.code,
           detail: `${h.toFixed(2)}h de repos (min 9h absolu)`,
