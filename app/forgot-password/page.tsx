@@ -1,22 +1,37 @@
 "use client"
 
 import Link from "next/link"
-import { Truck, Mail, ArrowLeft } from "lucide-react"
+import { Truck, Mail, ArrowLeft, Loader2, CheckCircle } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useState } from "react"
+import { authClient } from "@/lib/auth-client"
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
   const [submitted, setSubmitted] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    // La réinitialisation de mot de passe par email n'est pas encore configurée.
-    // Contacter l'administrateur pour réinitialiser votre mot de passe.
-    setSubmitted(true)
+    setLoading(true)
+    setError("")
+
+    try {
+      await authClient.requestPasswordReset({
+        email,
+        redirectTo: "/reset-password",
+      })
+      setSubmitted(true)
+    } catch (err: any) {
+      // Always show success to not reveal if email exists
+      setSubmitted(true)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -33,13 +48,19 @@ export default function ForgotPasswordPage() {
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">Mot de passe oublié</CardTitle>
             <CardDescription>
-              Contactez votre administrateur pour réinitialiser votre mot de passe.
+              Entrez votre adresse email pour recevoir un lien de réinitialisation.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {submitted ? (
-              <div className="rounded-lg bg-green-50 p-4 text-center text-sm text-green-800">
-                Demande envoyée. Votre administrateur vous contactera prochainement.
+              <div className="rounded-lg bg-green-50 p-6 text-center space-y-2">
+                <CheckCircle className="mx-auto h-8 w-8 text-green-600" />
+                <p className="text-sm font-medium text-green-800">
+                  Si cette adresse est associée à un compte, un email de réinitialisation a été envoyé.
+                </p>
+                <p className="text-xs text-green-600">
+                  Vérifiez votre boîte de réception et vos spams.
+                </p>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -58,8 +79,18 @@ export default function ForgotPasswordPage() {
                     />
                   </div>
                 </div>
-                <Button type="submit" className="w-full">
-                  Envoyer la demande
+                {error && (
+                  <p className="text-sm text-danger">{error}</p>
+                )}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Envoi en cours...
+                    </>
+                  ) : (
+                    "Envoyer le lien de réinitialisation"
+                  )}
                 </Button>
               </form>
             )}

@@ -28,4 +28,4 @@ export const authClient = createAuthClient({
 })
 
 // Export des helpers directement utilisables
-export const { signIn, signUp, signOut, useSession, getSession } = authClient
+export const { signIn, signUp, signOut, useSession, getSession, requestPasswordReset, resetPassword } = authClient
