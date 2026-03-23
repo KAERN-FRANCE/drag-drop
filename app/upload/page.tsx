@@ -12,11 +12,12 @@ import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, CloudUpload, File, X, Loader2, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { parseChronoExcel, validateFileFormat } from "@/lib/file-parser"
+import { parseChronoExcel, validateFileFormat, type ParsedChronoData } from "@/lib/file-parser"
 import { calculerScoreConformite } from "@/lib/analyse-infractions"
 import { detecterInfractionsChronologiques } from "@/lib/chrono-infractions"
+import { CalendarDays } from "lucide-react"
 
-type UploadState = "idle" | "selected" | "uploading" | "analyzing" | "complete" | "error"
+type UploadState = "idle" | "parsing" | "selected" | "uploading" | "analyzing" | "complete" | "error"
 
 /**
  * Convertit une date en format français vers ISO (YYYY-MM-DD)
@@ -80,6 +81,9 @@ export default function UploadPage() {
   const [drivers, setDrivers] = useState<any[]>([])
   const [analysisResults, setAnalysisResults] = useState<any>(null)
   const [analysisId, setAnalysisId] = useState<number | null>(null)
+  const [parsedData, setParsedData] = useState<ParsedChronoData | null>(null)
+  const [periodStart, setPeriodStart] = useState("")
+  const [periodEnd, setPeriodEnd] = useState("")
 
   useEffect(() => {
     const fetchDrivers = async () => {
@@ -92,7 +96,7 @@ export default function UploadPage() {
     fetchDrivers()
   }, [])
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       const validation = validateFileFormat(acceptedFiles[0])
       if (!validation.valid) {
@@ -101,9 +105,21 @@ export default function UploadPage() {
         return
       }
       setFile(acceptedFiles[0])
-      setUploadState("selected")
       setShowDriverError(false)
       setErrorMessage("")
+
+      // Pré-parsing pour détecter la période du fichier
+      setUploadState("parsing")
+      try {
+        const parsed = await parseChronoExcel(acceptedFiles[0])
+        setParsedData(parsed)
+        setPeriodStart(parsed.periodStart)
+        setPeriodEnd(parsed.periodEnd)
+        setUploadState("selected")
+      } catch (err: any) {
+        setErrorMessage(err?.message || "Erreur de lecture du fichier")
+        setUploadState("error")
+      }
     }
   }, [])
 
@@ -124,6 +140,9 @@ export default function UploadPage() {
     setSelectedDriver("")
     setShowDriverError(false)
     setErrorMessage("")
+    setParsedData(null)
+    setPeriodStart("")
+    setPeriodEnd("")
   }
 
   const startUpload = async () => {
@@ -132,39 +151,38 @@ export default function UploadPage() {
       return
     }
 
-    if (!file) return
+    if (!file || !parsedData) return
 
     try {
       setShowDriverError(false)
       setUploadState("uploading")
       setUploadProgress(0)
 
-      console.log("Début du parsing du fichier:", file.name)
       setUploadProgress(10)
 
-      // Parser le fichier Excel chronologique
-      const parsed = await parseChronoExcel(file)
-      console.log("Parsing réussi:", parsed.rowCount, "activités")
+      // Filtrer les activités sur la période choisie
+      const filteredActivities = parsedData.activities.filter(a => {
+        const date = a.start.split('T')[0]
+        return date >= periodStart && date <= periodEnd
+      })
+
+      console.log(`Activités filtrées: ${filteredActivities.length}/${parsedData.activities.length} (${periodStart} → ${periodEnd})`)
 
       setUploadProgress(30)
       setUploadState("analyzing")
       setUploadProgress(50)
 
       // Détecter les infractions avec le moteur chronologique
-      const infractions = detecterInfractionsChronologiques(parsed.activities)
+      const infractions = detecterInfractionsChronologiques(filteredActivities)
       console.log("Infractions détectées:", infractions.length)
 
       // Calculer le score
-      const uniqueDays = new Set(parsed.activities.map(a => a.start.split('T')[0]))
+      const uniqueDays = new Set(filteredActivities.filter(a => a.type !== 'REST').map(a => a.start.split('T')[0]))
       const nbJours = uniqueDays.size
       const score = calculerScoreConformite(nbJours, infractions.length, infractions)
       console.log("Score calculé:", score)
 
       setUploadProgress(70)
-
-      // Période
-      const periodStart = parsed.periodStart
-      const periodEnd = parsed.periodEnd
       console.log("Période:", periodStart, "->", periodEnd)
 
       setUploadProgress(85)
@@ -243,6 +261,9 @@ export default function UploadPage() {
     setErrorMessage("")
     setAnalysisResults(null)
     setAnalysisId(null)
+    setParsedData(null)
+    setPeriodStart("")
+    setPeriodEnd("")
   }
 
   const formatFileSize = (bytes: number) => {
@@ -277,6 +298,17 @@ export default function UploadPage() {
                   <div className="mt-6 space-y-1 text-xs text-muted-foreground">
                     <p>Format accepté : XLSX, XLS, CSV (décompte chronologique)</p>
                     <p>Taille max : 30 Mo</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Parsing State */}
+              {uploadState === "parsing" && (
+                <div className="space-y-6 text-center">
+                  <Loader2 className="mx-auto h-12 w-12 animate-spin text-primary" />
+                  <div>
+                    <p className="text-lg font-medium text-foreground">Lecture du fichier...</p>
+                    <p className="text-sm text-muted-foreground">Détection de la période</p>
                   </div>
                 </div>
               )}
@@ -327,6 +359,43 @@ export default function UploadPage() {
                       </Alert>
                     )}
                   </div>
+
+                  {/* Sélecteur de période */}
+                  {parsedData && (
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium text-foreground flex items-center gap-2">
+                        <CalendarDays className="h-4 w-4" />
+                        Période d'analyse
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        Données disponibles du {new Date(parsedData.periodStart + 'T00:00:00').toLocaleDateString('fr-FR')} au {new Date(parsedData.periodEnd + 'T00:00:00').toLocaleDateString('fr-FR')} ({parsedData.rowCount} activités)
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Date début</label>
+                          <input
+                            type="date"
+                            value={periodStart}
+                            min={parsedData.periodStart}
+                            max={periodEnd || parsedData.periodEnd}
+                            onChange={(e) => setPeriodStart(e.target.value)}
+                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Date fin</label>
+                          <input
+                            type="date"
+                            value={periodEnd}
+                            min={periodStart || parsedData.periodStart}
+                            max={parsedData.periodEnd}
+                            onChange={(e) => setPeriodEnd(e.target.value)}
+                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <Button className="w-full" size="lg" onClick={startUpload}>
                     <Upload className="mr-2 h-4 w-4" />
