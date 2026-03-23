@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
           <p>Vous pouvez dès à présent :</p>
           <ul style="color: #475569; line-height: 1.8;">
             <li>Ajouter vos chauffeurs</li>
-            <li>Importer vos fichiers tachygraphe (C1B, Excel)</li>
+            <li>Importer vos fichiers Excel chronologiques</li>
             <li>Analyser la conformité de votre flotte</li>
           </ul>
           <p style="text-align: center; margin: 30px 0;">

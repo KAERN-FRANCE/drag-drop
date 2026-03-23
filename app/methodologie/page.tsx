@@ -47,7 +47,7 @@ export default function MethodologiePage() {
             <div>
               <h1 className="text-2xl font-bold text-foreground">Méthodologie d'analyse</h1>
               <p className="mt-2 text-muted-foreground">
-                Notre analyse se base sur les fichiers tachygraphiques numériques (format C1B) et applique les règles
+                Notre analyse se base sur les fichiers Excel chronologiques (décompte chronologique) et applique les règles
                 du <strong>Règlement CE 561/2006</strong> relatif aux temps de conduite et de repos, ainsi que le
                 <strong> Règlement 2016/403/UE</strong> pour la classification des infractions par gravité (MSI, SI, I, IM).
               </p>
@@ -159,7 +159,7 @@ export default function MethodologiePage() {
               </CardHeader>
               <CardContent className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  L'analyse s'effectue à partir des <strong>fichiers C1B</strong> (carte conducteur numérique),
+                  L'analyse s'effectue à partir des <strong>fichiers Excel chronologiques</strong> (décompte chronologique),
                   qui contiennent l'enregistrement détaillé de chaque activité : conduite, travail, disponibilité et repos,
                   avec horodatage précis.
                 </p>

@@ -2,6 +2,13 @@
  * Types pour le système d'analyse de fichiers tachygraphe
  */
 
+export interface Activity {
+    type: 'DRIVING' | 'WORK' | 'REST' | 'AVAILABILITY' | 'UNKNOWN'
+    start: string   // ISO 8601
+    end: string     // ISO 8601
+    duration_minutes: number
+}
+
 export type GraviteInfraction = '3eme' | '4eme' | '5eme' | 'delit';
 
 export interface Infraction {

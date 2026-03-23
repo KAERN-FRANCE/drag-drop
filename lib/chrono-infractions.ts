@@ -1,16 +1,14 @@
 /**
- * Détection d'infractions depuis les activités C1B brutes (timestamps précis)
+ * Détection d'infractions depuis les activités chronologiques (timestamps précis)
  *
  * Conformité : Règlement CE 561/2006
+ * Source : fichiers Excel chronologiques (décompte chronologique)
  *
- * Corrections v2 :
  * - Les activités qui chevauchent minuit sont découpées entre les deux jours
- *   (évite les fausses infractions d'amplitude dues au cross-midnight)
  * - Détection PAUSE 4h30 avec prise en charge de la pause fractionnée (15+30 min)
  */
 
-import type { C1BActivity } from './c1b-transformer'
-import type { Infraction, GraviteInfraction } from '@/types'
+import type { Activity, Infraction, GraviteInfraction } from '@/types'
 import { REGLES_INFRACTIONS } from '@/types'
 
 // Tolérance : 1 minute en heures
@@ -207,7 +205,7 @@ interface WeekStats {
 
 // ── Analyse principale ────────────────────────────────
 
-export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction[] {
+export function detecterInfractionsChronologiques(activities: Activity[]): Infraction[] {
   if (!activities || activities.length === 0) return []
 
   const sorted = [...activities].sort(
@@ -302,18 +300,39 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
   interface RestBlock { startTs: number; endTs: number; durationMin: number }
   const restBlocks: RestBlock[] = []
 
+  // Fusion tolérante : les courtes interruptions non-DRIVING (≤5 min)
+  // ne cassent pas un bloc de repos (ex: AVAILABILITY de 2 min pendant la nuit)
+  let currentRestBlock: RestBlock | null = null
+
   for (const act of sorted) {
-    if (act.type !== 'REST') continue
     const s = new Date(act.start).getTime()
     const e = new Date(act.end).getTime()
-    const last = restBlocks[restBlocks.length - 1]
-    if (last && s <= last.endTs + 60_000) {
-      last.endTs = Math.max(last.endTs, e)
-      last.durationMin = (last.endTs - last.startTs) / 60_000
+
+    if (act.type === 'REST') {
+      if (currentRestBlock && s <= currentRestBlock.endTs + 60_000) {
+        // REST adjacent (≤1min gap) → fusionner
+        currentRestBlock.endTs = Math.max(currentRestBlock.endTs, e)
+        currentRestBlock.durationMin = (currentRestBlock.endTs - currentRestBlock.startTs) / 60_000
+      } else if (currentRestBlock && (s - currentRestBlock.endTs) / 60_000 <= 5) {
+        // Courte interruption ≤5min → continuer le bloc repos
+        currentRestBlock.endTs = Math.max(currentRestBlock.endTs, e)
+        currentRestBlock.durationMin = (currentRestBlock.endTs - currentRestBlock.startTs) / 60_000
+      } else {
+        if (currentRestBlock) restBlocks.push(currentRestBlock)
+        currentRestBlock = { startTs: s, endTs: e, durationMin: (e - s) / 60_000 }
+      }
+    } else if (act.type === 'DRIVING') {
+      // La conduite interrompt toujours un repos
+      if (currentRestBlock) { restBlocks.push(currentRestBlock); currentRestBlock = null }
     } else {
-      restBlocks.push({ startTs: s, endTs: e, durationMin: (e - s) / 60_000 })
+      // AVAILABILITY, WORK, UNKNOWN — interrompt seulement si > 5min
+      if (currentRestBlock && act.duration_minutes > 5) {
+        restBlocks.push(currentRestBlock); currentRestBlock = null
+      }
+      // ≤5min : le repos continue (endTs sera étendu au prochain REST)
     }
   }
+  if (currentRestBlock) restBlocks.push(currentRestBlock)
 
   const DAILY_REST_MIN = 9 * 60 - 1
   const DAILY_REST_NORMAL = 11 * 60 - 1
@@ -380,9 +399,9 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
       }
     }
 
-    // ── Conduite 9h-10h : max 2 fois/semaine ──
+    // ── Conduite > 9h : max 2 fois/semaine (les jours >10h comptent aussi) ──
     const jours9h10h = week.days.filter(
-      d => d.drivingMinutes > (9 + EPSILON) * 60 && d.drivingMinutes <= (10 + EPSILON) * 60
+      d => d.drivingMinutes > (9 + EPSILON) * 60
     )
     if (jours9h10h.length > 2) {
       const regle = REGLES_INFRACTIONS.find(r => r.code === 'COND_JOUR_10H_FREQ')!
@@ -445,37 +464,36 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
   }
 
   // Pour chaque gap > 24h : repos journalier insuffisant
+  // UNE seule infraction par gap (pas de slots fantômes)
   for (const gap of gaps) {
     const gapDurationH = (gap.beforeRestStart - gap.afterRestEnd) / 3_600_000
-    const expectedRests = Math.floor(gapDurationH / 24)
-    if (expectedRests < 1) continue
+    if (gapDurationH <= 24) continue
 
+    // Plus long repos trouvé dans le gap
     const blocksInGap = restBlocks
       .filter(rb => rb.startTs >= gap.afterRestEnd && rb.endTs <= gap.beforeRestStart)
       .sort((a, b) => b.durationMin - a.durationMin)
 
-    for (let i = 0; i < expectedRests; i++) {
-      const actualRestMin = blocksInGap[i]?.durationMin ?? 0
+    const longestRestMin = blocksInGap[0]?.durationMin ?? 0
 
-      if (actualRestMin < DAILY_REST_MIN) {
-        const h = actualRestMin / 60
-        const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
-        const grav = getGravity('REPOS_JOUR', h)
-        const estimatedTs = gap.afterRestEnd + (i + 1) * 24 * 3_600_000
-        const dateKey = extractLocalDate(
-          new Date(Math.min(estimatedTs, gap.beforeRestStart)).toISOString()
-        )
-        infractions.push({
-          date: formatDateFr(dateKey),
-          type: 'Repos journalier insuffisant',
-          code: regle.code,
-          detail: `${h.toFixed(2)}h de repos consécutif (min 9h)`,
-          valeur_constatee: h,
-          limite_reglementaire: 9,
-          ...grav,
-          article_loi: regle.article_loi,
-        })
-      }
+    if (longestRestMin < DAILY_REST_MIN) {
+      const h = longestRestMin / 60
+      const regle = REGLES_INFRACTIONS.find(r => r.code === 'REPOS_JOUR_11H')!
+      const grav = getGravity('REPOS_JOUR', h)
+      const estimatedTs = gap.afterRestEnd + 24 * 3_600_000
+      const dateKey = extractLocalDate(
+        new Date(Math.min(estimatedTs, gap.beforeRestStart)).toISOString()
+      )
+      infractions.push({
+        date: formatDateFr(dateKey),
+        type: 'Repos journalier insuffisant',
+        code: regle.code,
+        detail: `${h.toFixed(2)}h de repos consécutif (min 9h)`,
+        valeur_constatee: h,
+        limite_reglementaire: 9,
+        ...grav,
+        article_loi: regle.article_loi,
+      })
     }
   }
 
@@ -694,7 +712,9 @@ export function detecterInfractionsC1BRaw(activities: C1BActivity[]): Infraction
           ...grav,
           article_loi: regle.article_loi,
         })
-        conducteSinceBreak = 0
+        // Reporter l'excédent au-delà de 4h30 sur la fenêtre suivante
+        const excess = conducteSinceBreak - PAUSE_LIMIT
+        conducteSinceBreak = excess > 0 ? excess : 0
         breakPhase = 0
         firstBreakMin = 0
         segmentStart = act.start

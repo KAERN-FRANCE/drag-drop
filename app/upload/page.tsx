@@ -12,23 +12,16 @@ import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Upload, CloudUpload, File, X, Loader2, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { parseFile, validateFileFormat } from "@/lib/file-parser"
-import { extraireDonneesAnalyse, detecterInfractions, calculerScoreConformite } from "@/lib/analyse-infractions"
-import { corrigerAnneesInfractions } from "@/lib/date-corrections"
-import { isC1BFile, convertC1BToLigneRaw, C1BParseResponse } from "@/lib/c1b-transformer"
-import { detecterInfractionsC1BRaw } from "@/lib/c1b-infractions"
+import { parseChronoExcel, validateFileFormat } from "@/lib/file-parser"
+import { calculerScoreConformite } from "@/lib/analyse-infractions"
+import { detecterInfractionsChronologiques } from "@/lib/chrono-infractions"
 
 type UploadState = "idle" | "selected" | "uploading" | "analyzing" | "complete" | "error"
 
 /**
  * Convertit une date en format français vers ISO (YYYY-MM-DD)
- * @param frenchDate - Date au format "Ven. 28 Févr. 2025" ou "Semaine 40 2024"
- * @param contextYear - Année de référence pour les dates sans année explicite
- * @param contextMonth - Mois de référence pour détecter les transitions d'année
- * @returns Date au format ISO ou date actuelle si parsing échoue
  */
-function parseFrenchDate(frenchDate: string, contextYear?: number, contextMonth?: number): string {
-  // Mapping des mois français
+function parseFrenchDate(frenchDate: string): string {
   const moisFr: Record<string, string> = {
     'janv': '01', 'févr': '02', 'mars': '03', 'avr': '04',
     'mai': '05', 'juin': '06', 'juil': '07', 'août': '08',
@@ -42,34 +35,7 @@ function parseFrenchDate(frenchDate: string, contextYear?: number, contextMonth?
       const jour = match[1].padStart(2, '0')
       const moisText = match[2].toLowerCase().substring(0, 4)
       const annee = match[3]
-
       const mois = moisFr[moisText] || '01'
-      return `${annee}-${mois}-${jour}`
-    }
-
-    // Format sans année: "Lun. 16 Janv."
-    const matchSansAnnee = frenchDate.match(/(\d{1,2})\s+([a-zéû]+)\.?/i)
-    if (matchSansAnnee) {
-      const jour = matchSansAnnee[1].padStart(2, '0')
-      const moisText = matchSansAnnee[2].toLowerCase().substring(0, 4)
-      const moisNum = parseInt(moisFr[moisText] || '01')
-
-      // Déterminer l'année en fonction du contexte
-      let annee = contextYear || new Date().getFullYear()
-
-      // Si on a un mois de contexte et que le mois actuel est "avant" le contexte
-      // (ex: contexte = septembre (09), mois actuel = janvier (01))
-      // alors on est probablement passé à l'année suivante
-      if (contextMonth && moisNum < contextMonth && contextMonth >= 7) {
-        // Si le contexte est dans la deuxième moitié de l'année (>=7)
-        // et le mois actuel est dans la première moitié (<7)
-        // alors on incrémente l'année
-        if (moisNum <= 6) {
-          annee++
-        }
-      }
-
-      const mois = moisNum.toString().padStart(2, '0')
       return `${annee}-${mois}-${jour}`
     }
 
@@ -79,14 +45,12 @@ function parseFrenchDate(frenchDate: string, contextYear?: number, contextMonth?
       if (weekMatch) {
         const weekNum = parseInt(weekMatch[1])
         const year = parseInt(weekMatch[2])
-        // Calcul du lundi de la semaine ISO
         const jan4 = new Date(year, 0, 4)
         const dayOfWeek = jan4.getDay() || 7
         const monday = new Date(jan4)
         monday.setDate(jan4.getDate() - dayOfWeek + 1 + (weekNum - 1) * 7)
         return monday.toISOString().split('T')[0]
       }
-      // Format "Semaine X YYYY + Semaine Y YYYY" (infractions bi-hebdo)
       const biWeekMatch = frenchDate.match(/Semaine\s+(\d+)\s+(\d{4})\s*\+/)
       if (biWeekMatch) {
         const weekNum = parseInt(biWeekMatch[1])
@@ -99,10 +63,8 @@ function parseFrenchDate(frenchDate: string, contextYear?: number, contextMonth?
       }
     }
 
-    // Fallback: date actuelle
     return new Date().toISOString().split('T')[0]
-  } catch (error) {
-    console.error('Erreur de parsing de date:', frenchDate, error)
+  } catch {
     return new Date().toISOString().split('T')[0]
   }
 }
@@ -118,9 +80,7 @@ export default function UploadPage() {
   const [drivers, setDrivers] = useState<any[]>([])
   const [analysisResults, setAnalysisResults] = useState<any>(null)
   const [analysisId, setAnalysisId] = useState<number | null>(null)
-  const [c1bDriverName, setC1bDriverName] = useState<string | null>(null)
 
-  // Fetch drivers depuis l'API Railway
   useEffect(() => {
     const fetchDrivers = async () => {
       const res = await fetch('/api/drivers', { credentials: 'include' })
@@ -153,9 +113,8 @@ export default function UploadPage() {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
       "application/vnd.ms-excel": [".xls"],
       "text/csv": [".csv"],
-      "application/octet-stream": [".c1b", ".ddd", ".v1b"],
     },
-    maxSize: 30 * 1024 * 1024, // 30MB
+    maxSize: 30 * 1024 * 1024,
     multiple: false,
   })
 
@@ -180,135 +139,37 @@ export default function UploadPage() {
       setUploadState("uploading")
       setUploadProgress(0)
 
-      console.log("📄 Début du parsing du fichier:", file.name)
+      console.log("Début du parsing du fichier:", file.name)
       setUploadProgress(10)
 
-      let lignesRaw
-      let c1bDriverResult: any = null
-      const fileIsC1B = isC1BFile(file.name)
-
-      if (fileIsC1B) {
-        // ===== FLUX C1B =====
-        console.log("🔧 Fichier C1B détecté, envoi au parser Python...")
-
-        const formData = new FormData()
-        formData.append('file', file)
-
-        const response = await fetch('/api/parse-c1b', {
-          method: 'POST',
-          body: formData,
-        })
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Erreur du parser C1B' }))
-          throw new Error(errorData.error || `Erreur du parser C1B (${response.status})`)
-        }
-
-        const c1bData: C1BParseResponse = await response.json()
-        console.log("✅ C1B parsé:", c1bData.drivers_found, "conducteur(s),", c1bData.results[0]?.activities?.length, "activités")
-
-        if (!c1bData.results || c1bData.results.length === 0) {
-          throw new Error("Aucune donnée trouvée dans le fichier C1B")
-        }
-
-        // Prendre le premier conducteur
-        const driverResult = c1bData.results[0]
-        c1bDriverResult = driverResult
-        setC1bDriverName(driverResult.driver_name)
-
-        // Transformer les activités en LigneRaw
-        lignesRaw = convertC1BToLigneRaw(driverResult)
-        console.log("✅ Transformation C1B → LigneRaw:", lignesRaw.length, "lignes")
-      } else {
-        // ===== FLUX EXCEL/CSV =====
-        let parsedData
-        try {
-          parsedData = await parseFile(file)
-          console.log("✅ Parsing réussi:", parsedData.rowCount, "lignes")
-        } catch (parseError: any) {
-          console.error("❌ Erreur de parsing:", parseError)
-          throw new Error(`Erreur de parsing: ${parseError.message}`)
-        }
-        lignesRaw = parsedData.data
-      }
+      // Parser le fichier Excel chronologique
+      const parsed = await parseChronoExcel(file)
+      console.log("Parsing réussi:", parsed.rowCount, "activités")
 
       setUploadProgress(30)
-
-      // Étape 2: Analyser les données (algorithme commun pour les 2 flux)
       setUploadState("analyzing")
       setUploadProgress(50)
 
-      console.log("🔍 Début de l'analyse des données")
-      let journees: any, semaines: any, infractions: any, score: any
+      // Détecter les infractions avec le moteur chronologique
+      const infractions = detecterInfractionsChronologiques(parsed.activities)
+      console.log("Infractions détectées:", infractions.length)
 
-      try {
-        const extracted = extraireDonneesAnalyse(lignesRaw)
-        journees = extracted.journees
-        semaines = extracted.semaines
-        console.log("✅ Extraction:", journees.length, "journées,", semaines.length, "semaines")
-      } catch (extractError: any) {
-        console.error("❌ Erreur d'extraction:", extractError)
-        throw new Error(`Erreur d'extraction: ${extractError.message}`)
-      }
-
-      try {
-        if (fileIsC1B && c1bDriverResult) {
-          // Pour les fichiers C1B : utiliser les timestamps exacts (plus précis)
-          // Détecte aussi la pause 4h30 et les repos continus
-          infractions = detecterInfractionsC1BRaw(c1bDriverResult.activities)
-          console.log("✅ Détection C1B (timestamps):", infractions.length, "infractions")
-        } else {
-          infractions = detecterInfractions(journees, semaines)
-          console.log("✅ Détection Excel/CSV:", infractions.length, "infractions")
-
-          // Corriger les années si nécessaire (transition d'année)
-          const infractionsCorrigees = corrigerAnneesInfractions(infractions)
-          const nbCorrections = infractionsCorrigees.filter((inf, i) => inf.date !== infractions[i]?.date).length
-          if (nbCorrections > 0) {
-            console.log("🔧 Correction automatique de", nbCorrections, "dates (transition d'année)")
-            infractions = infractionsCorrigees
-          }
-        }
-      } catch (detectError: any) {
-        console.error("❌ Erreur de détection:", detectError)
-        throw new Error(`Erreur de détection: ${detectError.message}`)
-      }
-
-      try {
-        score = calculerScoreConformite(journees.length, infractions.length, infractions)
-        console.log("✅ Score calculé:", score)
-      } catch (scoreError: any) {
-        console.error("❌ Erreur de calcul de score:", scoreError)
-        throw new Error(`Erreur de calcul: ${scoreError.message}`)
-      }
+      // Calculer le score
+      const uniqueDays = new Set(parsed.activities.map(a => a.start.split('T')[0]))
+      const nbJours = uniqueDays.size
+      const score = calculerScoreConformite(nbJours, infractions.length, infractions)
+      console.log("Score calculé:", score)
 
       setUploadProgress(70)
 
-      // Étape 3: Stocker dans Railway via /api/analyses
-      console.log("💾 Début du stockage dans Railway")
-
-      // Calculer la période
-      let periodStart: string
-      let periodEnd: string
-
-      if (fileIsC1B && c1bDriverResult) {
-        // Utiliser TOUTES les activités pour déterminer la période complète
-        const allDates: string[] = (c1bDriverResult.activities || [])
-          .map((a: any) => (a.start as string).split('T')[0])
-          .sort()
-        const uniqueDates = [...new Set<string>(allDates)]
-        periodStart = uniqueDates[0] || parseFrenchDate(journees[0]?.date || '')
-        periodEnd = uniqueDates[uniqueDates.length - 1] || parseFrenchDate(journees[journees.length - 1]?.date || '')
-      } else {
-        periodStart = parseFrenchDate(journees[0]?.date || '')
-        periodEnd = parseFrenchDate(journees[journees.length - 1]?.date || '')
-      }
-
-      console.log("📅 Période:", periodStart, "->", periodEnd)
+      // Période
+      const periodStart = parsed.periodStart
+      const periodEnd = parsed.periodEnd
+      console.log("Période:", periodStart, "->", periodEnd)
 
       setUploadProgress(85)
 
-      // Appel unique à /api/analyses (crée analyse + infractions + recalcule score)
+      // Sauvegarder via l'API
       const infractionsData = infractions.map((inf: any) => ({
         type: inf.type,
         date: parseFrenchDate(inf.date),
@@ -344,28 +205,23 @@ export default function UploadPage() {
       }
 
       const saveData = await saveRes.json()
-      const analysisId = saveData.analysisId
-      score = saveData.driverScore ?? score
+      const newAnalysisId = saveData.analysisId
+      const finalScore = saveData.driverScore ?? score
 
-      console.log("✅ Analyse sauvegardée, ID:", analysisId, "| Score chauffeur:", score)
-      setAnalysisId(analysisId)
+      console.log("Analyse sauvegardée, ID:", newAnalysisId, "| Score:", finalScore)
+      setAnalysisId(newAnalysisId)
 
       setUploadProgress(100)
 
-      // Stocker les résultats pour l'affichage
       setAnalysisResults({
-        score,
+        score: finalScore,
         infractions: infractions.length,
         period: `${periodStart} - ${periodEnd}`
       })
 
-      console.log("🎉 Analyse terminée avec succès!")
       setUploadState("complete")
     } catch (error: any) {
-      console.error('❌ ERREUR GÉNÉRALE:', error)
-      console.error('Type:', typeof error)
-      console.error('Message:', error?.message)
-      console.error('Stack:', error?.stack)
+      console.error('Erreur:', error)
       setErrorMessage(error?.message || "Erreur inconnue lors de l'analyse du fichier")
       setUploadState("error")
     }
@@ -387,7 +243,6 @@ export default function UploadPage() {
     setErrorMessage("")
     setAnalysisResults(null)
     setAnalysisId(null)
-    setC1bDriverName(null)
   }
 
   const formatFileSize = (bytes: number) => {
@@ -420,7 +275,7 @@ export default function UploadPage() {
                   <p className="mt-4 text-lg font-medium text-foreground">Glissez-déposez votre fichier ici</p>
                   <p className="mt-1 text-sm text-muted-foreground">ou cliquez pour parcourir</p>
                   <div className="mt-6 space-y-1 text-xs text-muted-foreground">
-                    <p>Formats acceptés : XLSX, XLS, CSV, C1B, DDD, V1B</p>
+                    <p>Format accepté : XLSX, XLS, CSV (décompte chronologique)</p>
                     <p>Taille max : 30 Mo</p>
                   </div>
                 </div>
@@ -435,14 +290,7 @@ export default function UploadPage() {
                     </div>
                     <div className="flex-1">
                       <p className="font-medium text-foreground">{file.name}</p>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm text-muted-foreground">{formatFileSize(file.size)}</p>
-                        {isC1BFile(file.name) && (
-                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                            Tachygraphe C1B
-                          </span>
-                        )}
-                      </div>
+                      <p className="text-sm text-muted-foreground">{formatFileSize(file.size)}</p>
                     </div>
                     <Button
                       variant="ghost"
@@ -492,9 +340,7 @@ export default function UploadPage() {
                 <div className="space-y-6 text-center">
                   <Loader2 className="mx-auto h-12 w-12 animate-spin text-primary" />
                   <div>
-                    <p className="text-lg font-medium text-foreground">
-                      {file && isC1BFile(file.name) ? "Décodage du fichier tachygraphe..." : "Lecture du fichier..."}
-                    </p>
+                    <p className="text-lg font-medium text-foreground">Lecture du fichier...</p>
                     <p className="text-sm text-muted-foreground">{uploadProgress}%</p>
                   </div>
                   <Progress value={uploadProgress} className="h-2" />
@@ -531,12 +377,6 @@ export default function UploadPage() {
                   <div className="rounded-lg border border-border bg-muted/30 p-4 text-left">
                     <h4 className="font-medium text-foreground">Résumé</h4>
                     <div className="mt-3 space-y-2 text-sm">
-                      {c1bDriverName && (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Conducteur (carte)</span>
-                          <span className="font-medium">{c1bDriverName}</span>
-                        </div>
-                      )}
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Infractions détectées</span>
                         <span className="font-mono font-semibold text-danger">{analysisResults.infractions}</span>
@@ -576,7 +416,7 @@ export default function UploadPage() {
                   <div>
                     <p className="text-lg font-medium text-foreground">Erreur lors de l'analyse</p>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      {errorMessage || "Le format du fichier n'est pas reconnu. Veuillez vérifier que le fichier provient bien d'un chronotachygraphe."}
+                      {errorMessage || "Le format du fichier n'est pas reconnu. Veuillez vérifier que le fichier est un décompte chronologique."}
                     </p>
                   </div>
                   <Button onClick={resetUpload}>Réessayer</Button>
