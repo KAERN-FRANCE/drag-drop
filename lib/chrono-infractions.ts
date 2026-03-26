@@ -63,6 +63,16 @@ function getNextDateKey(dateKey: string): string {
 
 // ── Utilitaires affichage ────────────────────────────
 
+/**
+ * Formate un nombre d'heures décimal en "XhYY" (ex: 4.53 → "4h32", 11.0 → "11h")
+ */
+function fmtHM(h: number): string {
+  const totalMin = Math.round(Math.abs(h) * 60)
+  const hrs = Math.floor(totalMin / 60)
+  const min = totalMin % 60
+  return min > 0 ? `${hrs}h${min.toString().padStart(2, '0')}` : `${hrs}h`
+}
+
 function formatDateFr(dateKey: string): string {
   const [y, m, d] = dateKey.split('-').map(Number)
   const date = new Date(y, m - 1, d)
@@ -391,7 +401,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
         const grav = getGravity('COND_JOUR', h)
         infractions.push({
           date: jour.dateLabel, type: 'Conduite journalière excessive', code: regle.code,
-          detail: `${h.toFixed(2)}h de conduite (max 10h absolu, +${dep.toFixed(2)}h)`,
+          detail: `${fmtHM(h)} de conduite (max 10h, +${fmtHM(dep)})`,
           valeur_constatee: h, limite_reglementaire: 10,
           ...grav,
           article_loi: regle.article_loi,
@@ -412,7 +422,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
         const grav = getGravity('COND_JOUR', h)
         infractions.push({
           date: jour.dateLabel, type: 'Dépassement fréquence 10h', code: regle.code,
-          detail: `${h.toFixed(2)}h (>9h autorisé 2 fois/semaine max, ceci est le ${i + 1}ème)`,
+          detail: `${fmtHM(h)} (>9h autorisé 2 fois/semaine max, ceci est le ${i + 1}ème)`,
           valeur_constatee: h, limite_reglementaire: 9,
           ...grav,
           article_loi: regle.article_loi,
@@ -429,7 +439,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
         const regle = REGLES_INFRACTIONS.find(r => r.code === 'AMPLITUDE_12H')!
         infractions.push({
           date: jour.dateLabel, type: 'Amplitude journalière excessive', code: regle.code,
-          detail: `${amp.toFixed(2)}h d'amplitude (max 15h, repos min 9h)`,
+          detail: `${fmtHM(amp)} d'amplitude (max 15h, repos min 9h)`,
           valeur_constatee: amp, limite_reglementaire: 15,
           gravite: '4eme', amende_min: 135, amende_max: 750,
           article_loi: regle.article_loi,
@@ -488,7 +498,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
         date: formatDateFr(dateKey),
         type: 'Repos journalier insuffisant',
         code: regle.code,
-        detail: `${h.toFixed(2)}h de repos consécutif (min 9h)`,
+        detail: `${fmtHM(h)} de repos consécutif (min 9h)`,
         valeur_constatee: h,
         limite_reglementaire: 9,
         ...grav,
@@ -531,7 +541,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
           date: formatDateFr(dateKey),
           type: 'Repos hebdomadaire manquant (6×24h)',
           code: regle.code,
-          detail: `${gapH.toFixed(0)}h sans repos hebdomadaire (max 144h entre deux repos)`,
+          detail: `${fmtHM(gapH)} sans repos hebdomadaire (max 144h entre deux repos)`,
           valeur_constatee: gapH,
           limite_reglementaire: 144,
           ...grav,
@@ -559,7 +569,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
             date: formatDateFr(dateKey),
             type: 'Repos hebdomadaire réduit excessif',
             code: regle.code,
-            detail: `${(wr.durationMin / 60).toFixed(2)}h (3ème repos réduit consécutif, max 2 autorisés)`,
+            detail: `${fmtHM(wr.durationMin / 60)} (3ème repos réduit consécutif, max 2 autorisés)`,
             valeur_constatee: wr.durationMin / 60,
             limite_reglementaire: 45,
             ...grav,
@@ -601,7 +611,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
             date: formatDateFr(dateKey),
             type: 'Repos journalier réduit excessif',
             code: regle.code,
-            detail: `${h.toFixed(2)}h (repos réduit autorisé 3 fois entre repos hebdo, ceci est le ${j + 1}ème)`,
+            detail: `${fmtHM(h)} (repos réduit autorisé 3 fois entre repos hebdo, ceci est le ${j + 1}ème)`,
             valeur_constatee: h,
             limite_reglementaire: 11,
             ...grav,
@@ -629,7 +639,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
           date: formatDateFr(dateKey),
           type: 'Repos journalier réduit excessif',
           code: regle.code,
-          detail: `${h.toFixed(2)}h (repos réduit autorisé 3 fois entre repos hebdo, ceci est le ${j + 1}ème)`,
+          detail: `${fmtHM(h)} (repos réduit autorisé 3 fois entre repos hebdo, ceci est le ${j + 1}ème)`,
           valeur_constatee: h,
           limite_reglementaire: 11,
           ...grav,
@@ -650,7 +660,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
       const grav = getGravity('COND_HEBDO', conduiteH)
       infractions.push({
         date: week.weekLabel, type: 'Conduite hebdomadaire excessive', code: regle.code,
-        detail: `${conduiteH.toFixed(2)}h (max 56h, +${dep.toFixed(2)}h)`,
+        detail: `${fmtHM(conduiteH)} (max 56h, +${fmtHM(dep)})`,
         valeur_constatee: conduiteH, limite_reglementaire: 56,
         ...grav,
         article_loi: regle.article_loi,
@@ -670,7 +680,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
       const grav = getGravity('COND_2SEM', total)
       infractions.push({
         date: `${w1.weekLabel} + ${w2.weekLabel}`, type: 'Conduite 2 semaines excessive', code: regle.code,
-        detail: `${total.toFixed(2)}h sur 2 semaines (max 90h, +${dep.toFixed(2)}h)`,
+        detail: `${fmtHM(total)} sur 2 semaines (max 90h, +${fmtHM(dep)})`,
         valeur_constatee: total, limite_reglementaire: 90,
         ...grav,
         article_loi: regle.article_loi,
@@ -707,7 +717,7 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
           : formatDateFr(extractLocalDate(act.start))
         infractions.push({
           date: dateLabel, type: 'Pause 4h30 manquante', code: regle.code,
-          detail: `${h.toFixed(2)}h de conduite sans pause réglementaire`,
+          detail: `${fmtHM(h)} de conduite sans pause réglementaire`,
           valeur_constatee: h, limite_reglementaire: 4.5,
           ...grav,
           article_loi: regle.article_loi,

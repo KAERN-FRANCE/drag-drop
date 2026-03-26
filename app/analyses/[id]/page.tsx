@@ -129,11 +129,11 @@ export default function AnalysisDetailPage() {
             />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList>
-                <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>
-                <TabsTrigger value="daily">Par journée ({new Set(infractions.map(i => i.date)).size})</TabsTrigger>
-                <TabsTrigger value="weekly">Par semaine</TabsTrigger>
-                <TabsTrigger value="recommendations">Recommandations</TabsTrigger>
+              <TabsList className="w-full h-12 bg-muted/60 p-1 rounded-xl gap-1">
+                <TabsTrigger value="overview" className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md">Vue d'ensemble</TabsTrigger>
+                <TabsTrigger value="daily" className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md">Par journée ({new Set(infractions.map(i => i.date)).size})</TabsTrigger>
+                <TabsTrigger value="weekly" className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md">Par semaine</TabsTrigger>
+                <TabsTrigger value="recommendations" className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md">Recommandations</TabsTrigger>
               </TabsList>
               <div className="mt-6">
                 <TabsContent value="overview">
