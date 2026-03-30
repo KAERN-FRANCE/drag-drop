@@ -52,12 +52,13 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   const body = await request.json()
-  const { driverId, periodStart, periodEnd, score, infractionsData } = body as {
+  const { driverId, periodStart, periodEnd, score, infractionsData, rawActivities } = body as {
     driverId: number
     periodStart: string
     periodEnd: string
     score: number
     infractionsData: Array<{ type: string; date: string; severity: string; details?: Record<string, any> }>
+    rawActivities?: string
   }
 
   if (!driverId || !periodStart || !periodEnd) {
@@ -89,6 +90,7 @@ export async function POST(request: NextRequest) {
       periodEnd,
       score,
       status: 'completed',
+      rawActivities: rawActivities ?? null,
     })
     .returning()
 

@@ -30,10 +30,18 @@ export async function GET(request: NextRequest) {
   const { session, companyId } = await getSessionCompanyId(request)
   if (!session) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
+  // Par défaut, ne montrer que les chauffeurs actifs
+  // ?includeHidden=true pour voir aussi les inactifs
+  const includeHidden = request.nextUrl.searchParams.get('includeHidden') === 'true'
+
+  const conditions = []
+  if (companyId) conditions.push(eq(drivers.companyId, companyId))
+  if (!includeHidden) conditions.push(eq(drivers.status, 'active'))
+
   const rows = await db
     .select()
     .from(drivers)
-    .where(companyId ? eq(drivers.companyId, companyId) : undefined)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(drivers.name)
 
   return NextResponse.json({ drivers: rows })

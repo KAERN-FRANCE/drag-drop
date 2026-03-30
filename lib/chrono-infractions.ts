@@ -119,50 +119,67 @@ function getGravity(type: string, value: number): GravityResult {
 
   switch (type) {
     case 'COND_JOUR':
-      // h de conduite journalière
-      if (value > 13)       g = 'delit'
-      else if (value > 11.5) g = '5eme'
-      else if (value > 11)   g = '4eme'
-      else                    g = '3eme'  // > 10 à ≤ 11
+      // h de conduite journalière — EU 2016/403 Annexe III
+      // MSI (délit) : ≥ 13h30 (50% dépassement du seuil 9h)
+      // VSI (5ème)  : ≥ 11h
+      // SI  (4ème)  : ≥ 10h à < 11h
+      // SI  (3ème)  : < 10h (dépassement mineur)
+      if (value >= 13.5)     g = 'delit'
+      else if (value >= 11)  g = '5eme'
+      else if (value >= 10)  g = '4eme'
+      else                    g = '3eme'
       break
 
     case 'REPOS_JOUR':
-      // h de repos journalier réel
+      // h de repos journalier réel — EU 2016/403 Annexe III
+      // MSI (délit) : < 7h
+      // VSI (5ème)  : < 8h30
+      // SI  (4ème)  : < 10h
+      // SI  (3ème)  : ≥ 10h à < 11h
       if (value < 7)        g = 'delit'
       else if (value < 8.5) g = '5eme'
       else if (value < 10)  g = '4eme'
-      else                   g = '3eme'  // ≥ 10 à < 11
+      else                   g = '3eme'
       break
 
     case 'PAUSE':
-      // h de conduite sans pause
-      if (value > 7.5)      g = 'delit'
-      else if (value > 6)   g = '5eme'
-      else if (value > 5.25) g = '4eme'
-      else                    g = '3eme'  // > 4.5 à ≤ 5.25
+      // h de conduite sans pause — EU 2016/403 Annexe III
+      // VSI (5ème)  : ≥ 6h (pas de MSI dans le règlement)
+      // SI  (4ème)  : ≥ 5h15 à < 6h
+      // SI  (3ème)  : > 4h30 à < 5h15
+      if (value >= 6)        g = '5eme'
+      else if (value >= 5.25) g = '4eme'
+      else                    g = '3eme'
       break
 
     case 'COND_HEBDO':
-      // h de conduite hebdomadaire
-      if (value > 70)       g = 'delit'
-      else if (value > 64)  g = '5eme'
-      else if (value > 60)  g = '4eme'
-      else                   g = '3eme'  // > 56 à ≤ 60
+      // h de conduite hebdomadaire — EU 2016/403 Annexe III
+      // VSI (5ème) : ≥ 70h (25% dépassement de 56h)
+      // SI  (4ème) : ≥ 64h
+      // SI  (3ème) : > 56h à < 64h (ex: ≥ 60h)
+      if (value >= 70)      g = '5eme'
+      else if (value >= 64) g = '4eme'
+      else                   g = '3eme'
       break
 
     case 'COND_2SEM':
-      // h de conduite bi-hebdomadaire
-      if (value > 105)      g = '5eme'
-      else if (value > 100) g = '4eme'
-      else                   g = '3eme'  // > 90 à ≤ 100
+      // h de conduite bi-hebdomadaire — EU 2016/403 Annexe III
+      // VSI (5ème) : ≥ 112h30 (25% dépassement de 90h)
+      // SI  (4ème) : ≥ 105h
+      // SI  (3ème) : > 90h à < 105h
+      if (value >= 112.5)    g = '5eme'
+      else if (value >= 105) g = '4eme'
+      else                    g = '3eme'
       break
 
     case 'REPOS_HEBDO':
-      // h de manque (shortfall) par rapport au minimum requis
-      if (value >= 12)      g = 'delit'
-      else if (value >= 9)  g = '5eme'
+      // h de manque (shortfall) par rapport au minimum requis — EU 2016/403
+      // VSI (5ème)  : ≥ 9h de manque
+      // SI  (4ème)  : ≥ 3h de manque
+      // SI  (3ème)  : < 3h de manque
+      if (value >= 9)       g = '5eme'
       else if (value >= 3)  g = '4eme'
-      else                   g = '3eme'  // < 3h de manque
+      else                   g = '3eme'
       break
 
     default:

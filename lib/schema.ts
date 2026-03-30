@@ -126,6 +126,7 @@ export const analyses = pgTable('analyses', {
   status: text('status', { enum: ['completed', 'processing', 'failed'] })
     .notNull()
     .default('completed'),
+  rawActivities: text('raw_activities'),
   createdAt: timestamp('created_at').defaultNow(),
 })
 

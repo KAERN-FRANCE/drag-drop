@@ -9,9 +9,10 @@ interface AnalysisSummaryProps {
   infractions: number
   period: string
   cost: number
+  onPeriodClick?: () => void
 }
 
-export function AnalysisSummary({ score, infractions, period, cost }: AnalysisSummaryProps) {
+export function AnalysisSummary({ score, infractions, period, cost, onPeriodClick }: AnalysisSummaryProps) {
   return (
     <div className="grid gap-4 md:grid-cols-4">
       <Card>
@@ -33,7 +34,10 @@ export function AnalysisSummary({ score, infractions, period, cost }: AnalysisSu
         </CardContent>
       </Card>
 
-      <Card>
+      <Card
+        className={onPeriodClick ? "cursor-pointer transition-shadow hover:shadow-md hover:border-primary/50" : ""}
+        onClick={onPeriodClick}
+      >
         <CardContent className="flex flex-col items-center justify-center p-6">
           <div className="flex h-[120px] items-center justify-center">
             <div className="flex items-center gap-2">
@@ -41,7 +45,10 @@ export function AnalysisSummary({ score, infractions, period, cost }: AnalysisSu
               <span className="text-lg font-semibold text-foreground">{period}</span>
             </div>
           </div>
-          <p className="mt-2 text-sm font-medium text-foreground">Période analysée</p>
+          <p className="mt-2 text-sm font-medium text-foreground">
+            Période analysée
+            {onPeriodClick && <span className="ml-1 text-xs text-primary">(modifier)</span>}
+          </p>
         </CardContent>
       </Card>
 

@@ -41,14 +41,14 @@ export function DashboardContent() {
 
             <KPICards dateFrom={dateFrom} dateTo={dateTo} />
 
+            <DriversTable dateFrom={dateFrom} dateTo={dateTo} />
+
             <div className="grid gap-6 lg:grid-cols-3">
               <MonthlyEvolutionChart dateFrom={dateFrom} dateTo={dateTo} />
               <SeverityBreakdownChart dateFrom={dateFrom} dateTo={dateTo} />
             </div>
 
             <TopInfractionsChart dateFrom={dateFrom} dateTo={dateTo} />
-
-            <DriversTable dateFrom={dateFrom} dateTo={dateTo} />
           </div>
         </main>
       </div>

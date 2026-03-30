@@ -26,7 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Search, Plus, MoreHorizontal, Eye, FileSearch, Edit, Trash2, Loader2 } from "lucide-react"
+import { Search, Plus, MoreHorizontal, Eye, EyeOff, RotateCcw, FileSearch, Edit, Trash2, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AddDriverModal } from "@/components/drivers/add-driver-modal"
 import { EditDriverModal } from "@/components/drivers/edit-driver-modal"
@@ -53,14 +53,16 @@ export default function DriversListPage() {
   const [editDriver,    setEditDriver]    = useState<any>(null)
   const [deleteId,      setDeleteId]      = useState<number | null>(null)
   const [deleting,      setDeleting]      = useState(false)
+  const [showHidden,    setShowHidden]    = useState(false)
 
-  const fetchDrivers = async () => {
+  const fetchDrivers = async (includeHidden = false) => {
     const dateLimit = new Date()
     dateLimit.setMonth(dateLimit.getMonth() - 12)
     const dateLimitStr = dateLimit.toISOString().split('T')[0]
 
+    const driverUrl = includeHidden ? '/api/drivers?includeHidden=true' : '/api/drivers'
     const [driversRes, infRes] = await Promise.all([
-      fetch('/api/drivers', { credentials: 'include' }),
+      fetch(driverUrl, { credentials: 'include' }),
       fetch(`/api/infractions?dateFrom=${dateLimitStr}`, { credentials: 'include' }),
     ])
 
@@ -85,7 +87,22 @@ export default function DriversListPage() {
     setLoading(false)
   }
 
-  useEffect(() => { fetchDrivers() }, [])
+  useEffect(() => { fetchDrivers(showHidden) }, [showHidden])
+
+  const toggleDriverStatus = async (driverId: number, newStatus: 'active' | 'inactive') => {
+    try {
+      const res = await fetch(`/api/drivers/${driverId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (!res.ok) throw new Error('Erreur')
+      fetchDrivers(showHidden)
+    } catch (err) {
+      console.error('Erreur changement statut:', err)
+    }
+  }
 
   const deleteDriver = async () => {
     if (!deleteId) return
@@ -145,6 +162,16 @@ export default function DriversListPage() {
                   <SelectItem value="compliant">Conformes</SelectItem>
                 </SelectContent>
               </Select>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showHidden}
+                  onChange={(e) => setShowHidden(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <EyeOff className="h-3.5 w-3.5" />
+                Afficher les masqués
+              </label>
               <Badge variant="secondary" className="px-3 py-1">
                 {filteredDrivers.length} chauffeur{filteredDrivers.length > 1 ? 's' : ''}
               </Badge>
@@ -157,7 +184,7 @@ export default function DriversListPage() {
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {filteredDrivers.map((driver) => (
-                  <Card key={driver.id} className="transition-shadow hover:shadow-md">
+                  <Card key={driver.id} className={cn("transition-shadow hover:shadow-md", driver.status === 'inactive' && "opacity-60")}>
                     <CardContent className="p-6">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
@@ -168,9 +195,12 @@ export default function DriversListPage() {
                             <h3 className="font-semibold text-foreground">{driver.name}</h3>
                             <Badge
                               variant={driver.status === "active" ? "default" : "secondary"}
-                              className={cn("mt-1", driver.status === "active" && "bg-success/20 text-success hover:bg-success/30")}
+                              className={cn("mt-1",
+                                driver.status === "active" && "bg-success/20 text-success hover:bg-success/30",
+                                driver.status === "inactive" && "bg-muted text-muted-foreground"
+                              )}
                             >
-                              {driver.status === "active" ? "Actif" : "Inactif"}
+                              {driver.status === "active" ? "Actif" : "Masqué"}
                             </Badge>
                           </div>
                         </div>
@@ -190,6 +220,15 @@ export default function DriversListPage() {
                               <Edit className="mr-2 h-4 w-4" />Modifier
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {driver.status === 'active' ? (
+                              <DropdownMenuItem onClick={() => toggleDriverStatus(driver.id, 'inactive')}>
+                                <EyeOff className="mr-2 h-4 w-4" />Masquer le conducteur
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem onClick={() => toggleDriverStatus(driver.id, 'active')}>
+                                <RotateCcw className="mr-2 h-4 w-4" />Réactiver le conducteur
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem className="text-destructive" onClick={() => setDeleteId(driver.id)}>
                               <Trash2 className="mr-2 h-4 w-4" />Supprimer
                             </DropdownMenuItem>

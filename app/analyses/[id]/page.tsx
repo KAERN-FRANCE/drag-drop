@@ -1,7 +1,7 @@
 "use client"
 
-import { ChevronRight, FileDown, AlertTriangle } from "lucide-react"
-import { useParams } from "next/navigation"
+import { ChevronRight, FileDown, AlertTriangle, CalendarDays, Loader2 } from "lucide-react"
+import { useParams, useRouter } from "next/navigation"
 import { generateAnalysisPDF } from "@/lib/generate-pdf"
 import { useEffect, useState } from "react"
 import Link from "next/link"
@@ -15,31 +15,71 @@ import { RecommendationsTab } from "@/components/analysis/recommendations-tab"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 export default function AnalysisDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const id = params.id
   const [activeTab, setActiveTab] = useState("overview")
   const [analysis, setAnalysis] = useState<any>(null)
   const [infractions, setInfractions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [showPeriodDialog, setShowPeriodDialog] = useState(false)
+  const [newPeriodStart, setNewPeriodStart] = useState("")
+  const [newPeriodEnd, setNewPeriodEnd] = useState("")
+  const [reanalyzing, setReanalyzing] = useState(false)
+  const [hasRawData, setHasRawData] = useState(false)
+  const [rawDataRange, setRawDataRange] = useState({ min: "", max: "" })
+
+  const fetchAnalysis = async () => {
+    const res = await fetch(`/api/analyses/${id}`, { credentials: 'include' })
+    const data = await res.json()
+
+    if (data && !data.error) {
+      setAnalysis({
+        ...data,
+        period: `${new Date(data.periodStart).toLocaleDateString('fr-FR', { month: 'short' })}-${new Date(data.periodEnd).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })}`,
+      })
+      setInfractions(data.infractions || [])
+      setHasRawData(!!data.hasRawActivities)
+      if (data.rawDataRange) {
+        setRawDataRange(data.rawDataRange)
+      }
+      setNewPeriodStart(data.periodStart)
+      setNewPeriodEnd(data.periodEnd)
+    }
+    setLoading(false)
+  }
+
+  const reanalyze = async () => {
+    setReanalyzing(true)
+    try {
+      const res = await fetch(`/api/analyses/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ periodStart: newPeriodStart, periodEnd: newPeriodEnd }),
+      })
+      if (!res.ok) throw new Error('Erreur')
+      setShowPeriodDialog(false)
+      await fetchAnalysis()
+    } catch (err) {
+      console.error('Erreur re-analyse:', err)
+    } finally {
+      setReanalyzing(false)
+    }
+  }
 
   useEffect(() => {
     if (!id) return
-
-    const fetchAnalysis = async () => {
-      const res = await fetch(`/api/analyses/${id}`, { credentials: 'include' })
-      const data = await res.json()
-
-      if (data && !data.error) {
-        setAnalysis({
-          ...data,
-          period: `${new Date(data.periodStart).toLocaleDateString('fr-FR', { month: 'short' })}-${new Date(data.periodEnd).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })}`,
-        })
-        setInfractions(data.infractions || [])
-      }
-      setLoading(false)
-    }
     fetchAnalysis()
   }, [id])
 
@@ -126,7 +166,58 @@ export default function AnalysisDetailPage() {
               infractions={infractions.length}
               period={analysis.period}
               cost={totalCost}
+              onPeriodClick={hasRawData ? () => setShowPeriodDialog(true) : undefined}
             />
+
+            {/* Dialog modification de période */}
+            <Dialog open={showPeriodDialog} onOpenChange={setShowPeriodDialog}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Modifier la période d'analyse</DialogTitle>
+                  <DialogDescription>
+                    Choisissez une nouvelle période pour re-analyser les données du fichier.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Date de début</label>
+                    <input
+                      type="date"
+                      value={newPeriodStart}
+                      onChange={(e) => setNewPeriodStart(e.target.value)}
+                      min={rawDataRange.min || undefined}
+                      max={newPeriodEnd || rawDataRange.max || undefined}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Date de fin</label>
+                    <input
+                      type="date"
+                      value={newPeriodEnd}
+                      onChange={(e) => setNewPeriodEnd(e.target.value)}
+                      min={newPeriodStart || rawDataRange.min || undefined}
+                      max={rawDataRange.max || undefined}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+                  {rawDataRange.min && (
+                    <p className="text-xs text-muted-foreground">
+                      Données disponibles : {new Date(rawDataRange.min).toLocaleDateString('fr-FR')} — {new Date(rawDataRange.max).toLocaleDateString('fr-FR')}
+                    </p>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setShowPeriodDialog(false)} disabled={reanalyzing}>
+                    Annuler
+                  </Button>
+                  <Button onClick={reanalyze} disabled={reanalyzing || !newPeriodStart || !newPeriodEnd}>
+                    {reanalyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Re-analyser
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="w-full h-12 bg-muted/60 p-1 rounded-xl gap-1">
