@@ -23,37 +23,52 @@ const MOIS_MAP: Record<string, number> = {
   'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11, 'déc': 11,
 }
 
-// Mapping séquence → Activity type
+// Mapping séquence → Activity type (toutes variantes logiciels tachygraphes)
 const SEQUENCE_MAP: Record<string, Activity['type']> = {
-  'conduite': 'DRIVING',
-  'travail': 'WORK',
-  'repos': 'REST',
-  'coupure': 'REST',
-  'dispo': 'AVAILABILITY',
-  'disponibilité': 'AVAILABILITY',
-  'disponibilite': 'AVAILABILITY',
-  'autre': 'UNKNOWN',
+  // DRIVING
+  'conduite': 'DRIVING', 'cond': 'DRIVING', 'cond.': 'DRIVING', 'cond,': 'DRIVING', 'c': 'DRIVING',
+  // WORK
+  'travail': 'WORK', 'trav': 'WORK', 'trav.': 'WORK', 'trav,': 'WORK', 't': 'WORK',
+  // REST
+  'repos': 'REST', 'coupure': 'REST', 'coup': 'REST', 'coup.': 'REST', 'coup,': 'REST',
+  'pause': 'REST', 'r': 'REST',
+  // AVAILABILITY
+  'dispo': 'AVAILABILITY', 'disponibilite': 'AVAILABILITY', 'disponibilité': 'AVAILABILITY',
+  'disposition': 'AVAILABILITY', 'disp': 'AVAILABILITY', 'disp.': 'AVAILABILITY', 'disp,': 'AVAILABILITY',
+  'd': 'AVAILABILITY',
+  // UNKNOWN
+  'autre': 'UNKNOWN', 'a': 'UNKNOWN', 'inconnu': 'UNKNOWN',
 }
 
 /**
- * Normalise un nom de colonne (retire accents, lowercase, trim)
+ * Normalise un nom de colonne :
+ * - Retire les accents
+ * - Remplace \ et newlines par un espace (headers multi-lignes Tachogest)
+ * - Supprime la ponctuation finale (. ,)
+ * - Lowercase + trim + collapse espaces
  */
 function normalizeColName(name: string): string {
   return name
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\\\n\r]/g, ' ')
+    .replace(/[.,]/g, '')
     .toLowerCase()
+    .replace(/\s+/g, ' ')
     .trim()
 }
 
 /**
- * Trouve une colonne par nom normalisé parmi les colonnes disponibles
+ * Trouve une colonne par nom normalisé parmi les colonnes disponibles.
+ * `exclude` : si le header normalisé contient un de ces termes, il est ignoré
+ * (ex: exclure "ampl" pour que "Début\Ampl." ne matche pas "Début")
  */
-function findColumn(headers: string[], ...candidates: string[]): string | null {
-  const normalizedCandidates = candidates.map(normalizeColName)
+function findColumn(headers: string[], candidates: string[], exclude: string[] = []): string | null {
+  const nc = candidates.map(normalizeColName)
+  const ne = exclude.map(normalizeColName)
   for (const header of headers) {
-    if (normalizedCandidates.includes(normalizeColName(header))) {
-      return header
-    }
+    const nh = normalizeColName(header)
+    if (ne.some(ex => nh.includes(ex))) continue
+    if (nc.includes(nh)) return header
   }
   return null
 }
@@ -63,27 +78,62 @@ function findColumn(headers: string[], ...candidates: string[]): string | null {
  */
 function parseFrenchJour(jourStr: string): { year: number; month: number; day: number } | null {
   if (!jourStr || typeof jourStr !== 'string') return null
-
-  // Pattern : "Lun. 02 Mar. 2026" ou "02 Mar. 2026" ou "Lun 02 Mars 2026"
   const match = jourStr.match(/(\d{1,2})\s+([A-Za-zéûÉÛàÀ]+)\.?\s+(\d{4})/)
   if (!match) return null
-
   const day = parseInt(match[1], 10)
   const moisText = match[2].toLowerCase().substring(0, 3)
   const year = parseInt(match[3], 10)
-
   const month = MOIS_MAP[moisText]
   if (month === undefined) return null
-
   return { year, month, day }
 }
 
 /**
- * Parse un temps HH:MM → { hours, minutes }
+ * Parse une date multi-format : Date JS, nombre Excel, ISO, FR numérique, FR texte
  */
-function parseTime(timeStr: string): { hours: number; minutes: number } | null {
-  if (!timeStr || typeof timeStr !== 'string') return null
-  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+function parseJour(val: any): { year: number; month: number; day: number } | null {
+  if (val == null) return null
+
+  // Date JS
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return { year: val.getFullYear(), month: val.getMonth(), day: val.getDate() }
+  }
+  // Nombre Excel (serial date)
+  if (typeof val === 'number') {
+    const d = XLSX.SSF.parse_date_code(val)
+    if (d) return { year: d.y, month: d.m - 1, day: d.d }
+  }
+
+  const str = String(val).trim()
+  if (!str) return null
+
+  // ISO: 2026-03-02
+  const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) return { year: +iso[1], month: +iso[2] - 1, day: +iso[3] }
+
+  // FR numérique: 02/03/2026 ou 02.03.2026
+  const frNum = str.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/)
+  if (frNum) return { year: +frNum[3], month: +frNum[2] - 1, day: +frNum[1] }
+
+  // FR texte: "Lun. 02 Mar. 2026"
+  return parseFrenchJour(str)
+}
+
+/**
+ * Parse un temps multi-format : nombre Excel, HH:MM, HH:MM:SS
+ */
+function parseTime(val: any): { hours: number; minutes: number } | null {
+  if (val == null) return null
+
+  // Nombre Excel (fraction de jour: 0.5 = 12:00)
+  if (typeof val === 'number') {
+    const totalMin = Math.round(val * 24 * 60)
+    return { hours: Math.floor(totalMin / 60) % 24, minutes: totalMin % 60 }
+  }
+
+  const str = String(val).trim()
+  // HH:MM ou HH:MM:SS
+  const match = str.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
   if (!match) return null
   return { hours: parseInt(match[1], 10), minutes: parseInt(match[2], 10) }
 }
@@ -135,12 +185,39 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
           return
         }
 
-        // Détecter les colonnes
+        // Détecter les colonnes (toutes variantes logiciels tachygraphes)
         const headers = Object.keys(rows[0])
-        const colJour = findColumn(headers, 'Jour', 'Date', 'Journée', 'Journee')
-        const colDebut = findColumn(headers, 'Début', 'Debut', 'Heure début', 'Start')
-        const colFin = findColumn(headers, 'Fin', 'Heure fin', 'End')
-        const colSequence = findColumn(headers, 'Séquence', 'Sequence', 'Activité', 'Activite', 'Type')
+        const colJour = findColumn(headers, [
+          'Jour', 'Date', 'Journée', 'Journee', 'Jour Date', 'Date Jour',
+        ])
+        const colDebut = findColumn(headers, [
+          'Début', 'Debut', 'Heure début', 'Heure debut', 'Start',
+          'HDEB', 'Heure', 'Tachoheure',
+        ], ['ampl'])
+        const colFin = findColumn(headers, [
+          'Fin', 'Heure fin', 'End',
+          'HFIN', 'Heure Fin', 'Tachoheurefin',
+        ], ['ampl', 'disque'])
+        let colSequence = findColumn(headers, [
+          'Séquence', 'Sequence', 'Activité', 'Activite', 'Type',
+          'Code Séquence', 'Code Sequence', 'CodeSeq',
+        ])
+
+        // Fallback : détecter la colonne séquence par ses valeurs
+        if (!colSequence) {
+          for (const h of headers) {
+            let matches = 0
+            const sample = rows.slice(0, 20)
+            for (const row of sample) {
+              const v = String(row[h] || '').trim().toLowerCase()
+              if (v && SEQUENCE_MAP[v]) matches++
+            }
+            if (matches > sample.length * 0.5) {
+              colSequence = h
+              break
+            }
+          }
+        }
 
         // Validation des colonnes requises
         const missing: string[] = []
@@ -153,7 +230,7 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
           reject(new Error(
             `Colonnes manquantes : ${missing.join(', ')}. ` +
             `Le fichier doit être un décompte chronologique avec les colonnes : Jour, Début, Fin, Séquence. ` +
-            `Colonnes trouvées : ${headers.join(', ')}`
+            `Colonnes trouvées : ${headers.map(h => `"${h}" [${normalizeColName(h)}]`).join(', ')}`
           ))
           return
         }
@@ -168,8 +245,8 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
 
           // Parser le jour (peut être vide = même jour que le précédent)
           const jourVal = row[colJour!]
-          if (jourVal && String(jourVal).trim()) {
-            const parsed = parseFrenchJour(String(jourVal))
+          if (jourVal != null && String(jourVal).trim()) {
+            const parsed = parseJour(jourVal)
             if (parsed) {
               currentDate = parsed
             }
@@ -180,13 +257,13 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
             continue
           }
 
-          // Parser début et fin
-          const debutStr = String(row[colDebut!] || '').trim()
-          const finStr = String(row[colFin!] || '').trim()
+          // Parser début et fin (valeurs brutes pour supporter nombres Excel)
+          const debutRaw = row[colDebut!]
+          const finRaw = row[colFin!]
           const seqStr = String(row[colSequence!] || '').trim().toLowerCase()
 
-          const debut = parseTime(debutStr)
-          const fin = parseTime(finStr)
+          const debut = parseTime(debutRaw)
+          const fin = parseTime(finRaw)
 
           if (!debut || !fin || !seqStr) {
             skippedRows++
