@@ -232,7 +232,10 @@ interface WeekStats {
 
 // ── Analyse principale ────────────────────────────────
 
-export function detecterInfractionsChronologiques(activities: Activity[]): Infraction[] {
+export function detecterInfractionsChronologiques(
+  activities: Activity[],
+  options?: { skipPause?: boolean }
+): Infraction[] {
   if (!activities || activities.length === 0) return []
 
   const sorted = [...activities].sort(
@@ -709,6 +712,8 @@ export function detecterInfractionsChronologiques(activities: Activity[]): Infra
   // 5. Pause 4h30 — Art. 7 CE 561/2006
   //    Pause fractionnée : 1ère partie ≥ 15 min + 2ème partie ≥ 30 min
   //    (conduite possible entre les deux parties)
+  //    SKIP si format résumé journalier (pas de chronologie intra-journalière)
+  if (options?.skipPause) return infractions
   // ══════════════════════════════════════════════════
   const PAUSE_LIMIT  = 270  // 4h30 en minutes
   const BREAK1_MIN   = 15

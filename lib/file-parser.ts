@@ -6,12 +6,21 @@
 import * as XLSX from 'xlsx';
 import { Activity } from '@/types';
 
+export interface DriverBlock {
+  index: number
+  vehicles: string  // ex: "GM-523-RV, GM-230-CW"
+  dayCount: number
+}
+
 export interface ParsedChronoData {
   activities: Activity[]
   periodStart: string  // YYYY-MM-DD
   periodEnd: string    // YYYY-MM-DD
   fileName: string
   rowCount: number
+  isDailySummary: boolean
+  driverBlocks: DriverBlock[]
+  allBlockActivities?: Activity[][] // toutes les activités par bloc conducteur
 }
 
 // Mapping mois français abrégés → numéro (0-indexed)
@@ -250,72 +259,112 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
         }
 
         let activities: Activity[]
+        let driverBlocks: DriverBlock[] = []
+        let allBlockActivities: Activity[][] = []
+
+        // Colonne véhicule (pour identifier les conducteurs dans le résumé)
+        const colVehicle = findColumn(headers, [
+          'Véhicule', 'Vehicule', 'Véhicule(s)', 'Vehicule(s)',
+          'Véhicule(s) ou Activités', 'Vehicule(s) ou Activites',
+        ])
 
         if (isDailySummary) {
           // ═══════════════════════════════════════════════════
           // FORMAT RÉSUMÉ JOURNALIER (1 ligne = 1 jour)
-          // On construit des activités synthétiques à partir des totaux
+          // Séparer les conducteurs par restart des dates
           // ═══════════════════════════════════════════════════
-          activities = []
+          const toMin = (v: any) => {
+            if (v == null) return 0
+            if (typeof v === 'number') return Math.round(v * 24 * 60)
+            const m = String(v).match(/^(\d+):(\d{2})/)
+            return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0
+          }
+
+          // Phase 1 : extraire les lignes journalières avec leur date
+          interface DayRow {
+            dateObj: { year: number; month: number; day: number }
+            dateKey: string
+            debut: { hours: number; minutes: number }
+            fin: { hours: number; minutes: number }
+            condMin: number; travMin: number; dispMin: number; coupMin: number
+            vehicle: string
+          }
+          const dayRows: DayRow[] = []
 
           for (const row of rows) {
-            // Ignorer les lignes "Semaine XX"
             const jourVal = row[colJour!]
             if (typeof jourVal === 'string' && /semaine|total|mois|trimestre|quadrimestre/i.test(jourVal)) continue
-
             const dateObj = parseJour(jourVal)
             if (!dateObj) continue
-
             const debut = parseTime(row[colDebut!])
             const fin = parseTime(row[colFin!])
-            if (!debut || !fin) continue // Jour de repos (samedi/dimanche)
+            if (!debut || !fin) continue
 
             const pad = (n: number) => n.toString().padStart(2, '0')
-            const dateStr = `${dateObj.year}-${pad(dateObj.month + 1)}-${pad(dateObj.day)}`
-
-            // Lire les durées (fractions de jour Excel → minutes)
-            const toMin = (v: any) => {
-              if (v == null) return 0
-              if (typeof v === 'number') return Math.round(v * 24 * 60)
-              const m = String(v).match(/^(\d+):(\d{2})/)
-              return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0
-            }
-
-            const condMin = toMin(row[colCond!])
-            const travMin = toMin(colTrav ? row[colTrav] : null)
-            const dispMin = toMin(colDisp ? row[colDisp] : null)
-            const coupMin = toMin(colCoup ? row[colCoup] : null)
-
-            // Construire les timestamps de la journée
-            const dayStartTs = buildTimestamp(dateObj.year, dateObj.month, dateObj.day, debut.hours, debut.minutes)
-            let endDate = dateObj
-            if (fin.hours < debut.hours || (fin.hours === debut.hours && fin.minutes < debut.minutes)) {
-              endDate = addDays(dateObj, 1)
-            }
-            const dayEndTs = buildTimestamp(endDate.year, endDate.month, endDate.day, fin.hours, fin.minutes)
-
-            // On crée des blocs d'activité dans l'ordre : Conduite, Travail, Dispo, Coupure
-            // (l'ordre exact est inconnu, mais ça suffit pour les infractions hors pause 4h30)
-            let cursor = new Date(dayStartTs).getTime()
-            const blocks: { type: Activity['type']; min: number }[] = [
-              { type: 'DRIVING', min: condMin },
-              { type: 'WORK', min: travMin },
-              { type: 'AVAILABILITY', min: dispMin },
-              { type: 'REST', min: coupMin },
-            ]
-
-            for (const block of blocks) {
-              if (block.min <= 0) continue
-              const blockEnd = cursor + block.min * 60_000
-              activities.push({
-                type: block.type,
-                start: new Date(cursor).toISOString().replace(/\.\d+Z$/, '').split('.')[0],
-                end: new Date(blockEnd).toISOString().replace(/\.\d+Z$/, '').split('.')[0],
-                duration_minutes: block.min,
-              })
-              cursor = blockEnd
-            }
+            dayRows.push({
+              dateObj,
+              dateKey: `${dateObj.year}-${pad(dateObj.month + 1)}-${pad(dateObj.day)}`,
+              debut, fin,
+              condMin: toMin(row[colCond!]),
+              travMin: toMin(colTrav ? row[colTrav] : null),
+              dispMin: toMin(colDisp ? row[colDisp] : null),
+              coupMin: toMin(colCoup ? row[colCoup] : null),
+              vehicle: colVehicle ? String(row[colVehicle] || '').trim() : '',
+            })
           }
+
+          // Phase 2 : séparer en blocs conducteurs (restart quand la date recule)
+          const blocks: DayRow[][] = []
+          let currentBlock: DayRow[] = []
+
+          for (const day of dayRows) {
+            if (currentBlock.length > 0) {
+              const prevKey = currentBlock[currentBlock.length - 1].dateKey
+              if (day.dateKey <= prevKey) {
+                // Date recule → nouveau conducteur
+                blocks.push(currentBlock)
+                currentBlock = []
+              }
+            }
+            currentBlock.push(day)
+          }
+          if (currentBlock.length > 0) blocks.push(currentBlock)
+
+          // Phase 3 : construire les activités pour chaque bloc
+          allBlockActivities = blocks.map(block => {
+            const acts: Activity[] = []
+            for (const day of block) {
+              const dayStartTs = buildTimestamp(day.dateObj.year, day.dateObj.month, day.dateObj.day, day.debut.hours, day.debut.minutes)
+              let cursor = new Date(dayStartTs).getTime()
+              const segs: { type: Activity['type']; min: number }[] = [
+                { type: 'DRIVING', min: day.condMin },
+                { type: 'WORK', min: day.travMin },
+                { type: 'AVAILABILITY', min: day.dispMin },
+                { type: 'REST', min: day.coupMin },
+              ]
+              for (const seg of segs) {
+                if (seg.min <= 0) continue
+                const segEnd = cursor + seg.min * 60_000
+                acts.push({
+                  type: seg.type,
+                  start: new Date(cursor).toISOString().replace(/\.\d+Z$/, '').split('.')[0],
+                  end: new Date(segEnd).toISOString().replace(/\.\d+Z$/, '').split('.')[0],
+                  duration_minutes: seg.min,
+                })
+                cursor = segEnd
+              }
+            }
+            return acts
+          })
+
+          // Phase 4 : construire les métadonnées des blocs
+          driverBlocks = blocks.map((block, i) => {
+            const vehicles = [...new Set(block.map(d => d.vehicle).filter(Boolean))]
+            return { index: i, vehicles: vehicles.join(', ') || `Conducteur ${i + 1}`, dayCount: block.length }
+          })
+
+          // Par défaut : premier bloc
+          activities = allBlockActivities[0] || []
         } else {
           // ═══════════════════════════════════════════════════
           // FORMAT CHRONOLOGIQUE (1 ligne = 1 activité)
@@ -400,12 +449,33 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
         const periodStart = withRests[0].start.split('T')[0]
         const periodEnd = withRests[withRests.length - 1].end.split('T')[0]
 
+        // Injecter les repos dans chaque bloc conducteur aussi
+        const allBlockWithRests = allBlockActivities.map(blockActs => {
+          const sorted = [...blockActs].sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+          const result: Activity[] = []
+          for (let i = 0; i < sorted.length; i++) {
+            result.push(sorted[i])
+            if (i < sorted.length - 1) {
+              const curEnd = new Date(sorted[i].end).getTime()
+              const nxtStart = new Date(sorted[i + 1].start).getTime()
+              const gap = (nxtStart - curEnd) / 60_000
+              if (gap > 30) {
+                result.push({ type: 'REST', start: sorted[i].end, end: sorted[i + 1].start, duration_minutes: gap })
+              }
+            }
+          }
+          return result
+        })
+
         resolve({
           activities: withRests,
           periodStart,
           periodEnd,
           fileName: file.name,
           rowCount: withRests.length,
+          isDailySummary: !!isDailySummary,
+          driverBlocks,
+          allBlockActivities: allBlockWithRests.length > 1 ? allBlockWithRests : undefined,
         })
       } catch (error) {
         reject(new Error(`Erreur lors du parsing : ${error}`))

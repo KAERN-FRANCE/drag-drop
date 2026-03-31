@@ -84,6 +84,7 @@ export default function UploadPage() {
   const [parsedData, setParsedData] = useState<ParsedChronoData | null>(null)
   const [periodStart, setPeriodStart] = useState("")
   const [periodEnd, setPeriodEnd] = useState("")
+  const [selectedBlock, setSelectedBlock] = useState(0)
 
   useEffect(() => {
     const fetchDrivers = async () => {
@@ -143,6 +144,7 @@ export default function UploadPage() {
     setParsedData(null)
     setPeriodStart("")
     setPeriodEnd("")
+    setSelectedBlock(0)
   }
 
   const startUpload = async () => {
@@ -160,20 +162,28 @@ export default function UploadPage() {
 
       setUploadProgress(10)
 
+      // Utiliser le bon bloc conducteur si multi-conducteurs
+      const baseActivities = (parsedData.allBlockActivities && parsedData.allBlockActivities.length > 1)
+        ? parsedData.allBlockActivities[selectedBlock]
+        : parsedData.activities
+
       // Filtrer les activités sur la période choisie
-      const filteredActivities = parsedData.activities.filter(a => {
+      const filteredActivities = baseActivities.filter(a => {
         const date = a.start.split('T')[0]
         return date >= periodStart && date <= periodEnd
       })
 
-      console.log(`Activités filtrées: ${filteredActivities.length}/${parsedData.activities.length} (${periodStart} → ${periodEnd})`)
+      console.log(`Activités filtrées: ${filteredActivities.length}/${baseActivities.length} (${periodStart} → ${periodEnd})`)
 
       setUploadProgress(30)
       setUploadState("analyzing")
       setUploadProgress(50)
 
-      // Détecter les infractions avec le moteur chronologique
-      const infractions = detecterInfractionsChronologiques(filteredActivities)
+      // Détecter les infractions (skip pause 4h30 si résumé journalier)
+      const infractions = detecterInfractionsChronologiques(
+        filteredActivities,
+        { skipPause: parsedData.isDailySummary }
+      )
       console.log("Infractions détectées:", infractions.length)
 
       // Calculer le score
@@ -265,6 +275,7 @@ export default function UploadPage() {
     setParsedData(null)
     setPeriodStart("")
     setPeriodEnd("")
+    setSelectedBlock(0)
   }
 
   const formatFileSize = (bytes: number) => {
@@ -360,6 +371,30 @@ export default function UploadPage() {
                       </Alert>
                     )}
                   </div>
+
+                  {/* Sélecteur de conducteur (multi-conducteurs) */}
+                  {parsedData && parsedData.driverBlocks.length > 1 && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-foreground">
+                        Conducteur dans le fichier
+                      </label>
+                      <Select value={String(selectedBlock)} onValueChange={(v) => setSelectedBlock(parseInt(v))}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {parsedData.driverBlocks.map((block) => (
+                            <SelectItem key={block.index} value={String(block.index)}>
+                              {block.vehicles} ({block.dayCount} jours)
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Ce fichier contient {parsedData.driverBlocks.length} conducteurs. Sélectionnez celui à analyser.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Sélecteur de période */}
                   {parsedData && (
