@@ -219,92 +219,150 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
           }
         }
 
-        // Validation des colonnes requises
-        const missing: string[] = []
-        if (!colJour) missing.push('Jour')
-        if (!colDebut) missing.push('Début')
-        if (!colFin) missing.push('Fin')
-        if (!colSequence) missing.push('Séquence')
+        // ── Détection du format : chronologique (Séquence) ou résumé journalier (Cond/Trav/Coup) ──
+        // Colonnes résumé journalier (format TACHO / Tachogest)
+        const colCond = findColumn(headers, [
+          'Conduite', 'Cond', 'Cond Journ',
+        ])
+        const colTrav = findColumn(headers, ['Travail', 'Trav'])
+        const colDisp = findColumn(headers, [
+          'Dispo', 'Disponibilité', 'Disponibilite', 'Disposition', 'Disp',
+        ])
+        const colCoup = findColumn(headers, ['Coupure', 'Coup'])
+        const colRepos = findColumn(headers, ['Repos Jr /Heb', 'Repos Jr/Heb', 'Repos', 'Repos Journalier', 'RJ'])
 
-        if (missing.length > 0) {
+        const isDailySummary = !colSequence && colJour && colDebut && colFin && colCond
+        const isChronological = !!colSequence && !!colJour && !!colDebut && !!colFin
+
+        if (!isDailySummary && !isChronological) {
+          const missing: string[] = []
+          if (!colJour) missing.push('Jour')
+          if (!colDebut) missing.push('Début')
+          if (!colFin) missing.push('Fin')
+          if (!colSequence && !colCond) missing.push('Séquence ou Conduite')
           reject(new Error(
             `Colonnes manquantes : ${missing.join(', ')}. ` +
-            `Le fichier doit être un décompte chronologique avec les colonnes : Jour, Début, Fin, Séquence. ` +
+            `Le fichier doit être un décompte chronologique (Jour, Début, Fin, Séquence) ` +
+            `ou un résumé journalier (Jour, Début, Fin, Cond, Trav, Coup). ` +
             `Colonnes trouvées : ${headers.map(h => `"${h}" [${normalizeColName(h)}]`).join(', ')}`
           ))
           return
         }
 
-        // Parser les activités
-        const activities: Activity[] = []
-        let currentDate: { year: number; month: number; day: number } | null = null
-        let skippedRows = 0
+        let activities: Activity[]
 
-        for (let i = 0; i < rows.length; i++) {
-          const row = rows[i]
+        if (isDailySummary) {
+          // ═══════════════════════════════════════════════════
+          // FORMAT RÉSUMÉ JOURNALIER (1 ligne = 1 jour)
+          // On construit des activités synthétiques à partir des totaux
+          // ═══════════════════════════════════════════════════
+          activities = []
 
-          // Parser le jour (peut être vide = même jour que le précédent)
-          const jourVal = row[colJour!]
-          if (jourVal != null && String(jourVal).trim()) {
-            const parsed = parseJour(jourVal)
-            if (parsed) {
-              currentDate = parsed
+          for (const row of rows) {
+            // Ignorer les lignes "Semaine XX"
+            const jourVal = row[colJour!]
+            if (typeof jourVal === 'string' && /semaine|total|mois|trimestre|quadrimestre/i.test(jourVal)) continue
+
+            const dateObj = parseJour(jourVal)
+            if (!dateObj) continue
+
+            const debut = parseTime(row[colDebut!])
+            const fin = parseTime(row[colFin!])
+            if (!debut || !fin) continue // Jour de repos (samedi/dimanche)
+
+            const pad = (n: number) => n.toString().padStart(2, '0')
+            const dateStr = `${dateObj.year}-${pad(dateObj.month + 1)}-${pad(dateObj.day)}`
+
+            // Lire les durées (fractions de jour Excel → minutes)
+            const toMin = (v: any) => {
+              if (v == null) return 0
+              if (typeof v === 'number') return Math.round(v * 24 * 60)
+              const m = String(v).match(/^(\d+):(\d{2})/)
+              return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0
+            }
+
+            const condMin = toMin(row[colCond!])
+            const travMin = toMin(colTrav ? row[colTrav] : null)
+            const dispMin = toMin(colDisp ? row[colDisp] : null)
+            const coupMin = toMin(colCoup ? row[colCoup] : null)
+
+            // Construire les timestamps de la journée
+            const dayStartTs = buildTimestamp(dateObj.year, dateObj.month, dateObj.day, debut.hours, debut.minutes)
+            let endDate = dateObj
+            if (fin.hours < debut.hours || (fin.hours === debut.hours && fin.minutes < debut.minutes)) {
+              endDate = addDays(dateObj, 1)
+            }
+            const dayEndTs = buildTimestamp(endDate.year, endDate.month, endDate.day, fin.hours, fin.minutes)
+
+            // On crée des blocs d'activité dans l'ordre : Conduite, Travail, Dispo, Coupure
+            // (l'ordre exact est inconnu, mais ça suffit pour les infractions hors pause 4h30)
+            let cursor = new Date(dayStartTs).getTime()
+            const blocks: { type: Activity['type']; min: number }[] = [
+              { type: 'DRIVING', min: condMin },
+              { type: 'WORK', min: travMin },
+              { type: 'AVAILABILITY', min: dispMin },
+              { type: 'REST', min: coupMin },
+            ]
+
+            for (const block of blocks) {
+              if (block.min <= 0) continue
+              const blockEnd = cursor + block.min * 60_000
+              activities.push({
+                type: block.type,
+                start: new Date(cursor).toISOString().replace(/\.\d+Z$/, '').split('.')[0],
+                end: new Date(blockEnd).toISOString().replace(/\.\d+Z$/, '').split('.')[0],
+                duration_minutes: block.min,
+              })
+              cursor = blockEnd
             }
           }
+        } else {
+          // ═══════════════════════════════════════════════════
+          // FORMAT CHRONOLOGIQUE (1 ligne = 1 activité)
+          // ═══════════════════════════════════════════════════
+          activities = []
+          let currentDate: { year: number; month: number; day: number } | null = null
+          let skippedRows = 0
 
-          if (!currentDate) {
-            skippedRows++
-            continue
+          for (let i = 0; i < rows.length; i++) {
+            const row = rows[i]
+
+            const jourVal = row[colJour!]
+            if (jourVal != null && String(jourVal).trim()) {
+              const parsed = parseJour(jourVal)
+              if (parsed) currentDate = parsed
+            }
+
+            if (!currentDate) { skippedRows++; continue }
+
+            const debutRaw = row[colDebut!]
+            const finRaw = row[colFin!]
+            const seqStr = String(row[colSequence!] || '').trim().toLowerCase()
+
+            const debut = parseTime(debutRaw)
+            const fin = parseTime(finRaw)
+
+            if (!debut || !fin || !seqStr) { skippedRows++; continue }
+
+            const actType = SEQUENCE_MAP[seqStr] || 'UNKNOWN'
+            const startTs = buildTimestamp(currentDate.year, currentDate.month, currentDate.day, debut.hours, debut.minutes)
+
+            let endDate = currentDate
+            if (fin.hours < debut.hours || (fin.hours === debut.hours && fin.minutes < debut.minutes)) {
+              endDate = addDays(currentDate, 1)
+            }
+            const endTs = buildTimestamp(endDate.year, endDate.month, endDate.day, fin.hours, fin.minutes)
+
+            const durationMin = (new Date(endTs).getTime() - new Date(startTs).getTime()) / 60_000
+            if (durationMin <= 0) { skippedRows++; continue }
+
+            activities.push({ type: actType, start: startTs, end: endTs, duration_minutes: durationMin })
           }
-
-          // Parser début et fin (valeurs brutes pour supporter nombres Excel)
-          const debutRaw = row[colDebut!]
-          const finRaw = row[colFin!]
-          const seqStr = String(row[colSequence!] || '').trim().toLowerCase()
-
-          const debut = parseTime(debutRaw)
-          const fin = parseTime(finRaw)
-
-          if (!debut || !fin || !seqStr) {
-            skippedRows++
-            continue
-          }
-
-          // Mapper la séquence
-          const actType = SEQUENCE_MAP[seqStr] || 'UNKNOWN'
-
-          // Construire les timestamps
-          const startTs = buildTimestamp(currentDate.year, currentDate.month, currentDate.day, debut.hours, debut.minutes)
-
-          // Détecter le passage minuit : si fin < début, on ajoute 1 jour
-          let endDate = currentDate
-          if (fin.hours < debut.hours || (fin.hours === debut.hours && fin.minutes < debut.minutes)) {
-            endDate = addDays(currentDate, 1)
-          }
-          const endTs = buildTimestamp(endDate.year, endDate.month, endDate.day, fin.hours, fin.minutes)
-
-          // Calculer la durée
-          const startTime = new Date(startTs).getTime()
-          const endTime = new Date(endTs).getTime()
-          const durationMin = (endTime - startTime) / 60_000
-
-          if (durationMin <= 0) {
-            skippedRows++
-            continue
-          }
-
-          activities.push({
-            type: actType,
-            start: startTs,
-            end: endTs,
-            duration_minutes: durationMin,
-          })
         }
 
         if (activities.length === 0) {
           reject(new Error(
-            `Aucune activité valide trouvée dans le fichier. ` +
-            `${skippedRows} lignes ignorées. Vérifiez le format du fichier.`
+            `Aucune activité valide trouvée dans le fichier. Vérifiez le format du fichier.`
           ))
           return
         }
