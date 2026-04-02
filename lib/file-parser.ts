@@ -45,6 +45,8 @@ const SEQUENCE_MAP: Record<string, Activity['type']> = {
   'dispo': 'AVAILABILITY', 'disponibilite': 'AVAILABILITY', 'disponibilité': 'AVAILABILITY',
   'disposition': 'AVAILABILITY', 'disp': 'AVAILABILITY', 'disp.': 'AVAILABILITY', 'disp,': 'AVAILABILITY',
   'd': 'AVAILABILITY',
+  // CODES NUMÉRIQUES C1B (Tachogest, Architac — standard EU 2 bits)
+  '0': 'REST', '1': 'AVAILABILITY', '2': 'WORK', '3': 'DRIVING',
   // UNKNOWN
   'autre': 'UNKNOWN', 'a': 'UNKNOWN', 'inconnu': 'UNKNOWN',
 }
