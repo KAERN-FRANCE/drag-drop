@@ -109,6 +109,13 @@ function parseJour(val: any): { year: number; month: number; day: number } | nul
   if (val instanceof Date && !isNaN(val.getTime())) {
     return { year: val.getFullYear(), month: val.getMonth(), day: val.getDate() }
   }
+  // Nombre YYYYMMDD (ex: 20260302)
+  if (typeof val === 'number' && val >= 19000101 && val <= 21001231) {
+    const y = Math.floor(val / 10000)
+    const m = Math.floor((val % 10000) / 100)
+    const d = val % 100
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return { year: y, month: m - 1, day: d }
+  }
   // Nombre Excel (serial date)
   if (typeof val === 'number') {
     const d = XLSX.SSF.parse_date_code(val)
