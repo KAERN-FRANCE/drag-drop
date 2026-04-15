@@ -1,6 +1,11 @@
 /**
  * Parser pour fichiers Excel chronologiques (décompte chronologique)
- * Format attendu : Jour | Début | Fin | Durée | Séquence | Conduite | Travail | Dispo | Coupure
+ *
+ * Formats supportés :
+ * 1. Standard : Jour | Début | Fin | Durée | Séquence
+ * 2. Résumé journalier : Jour | Début | Fin | Cond | Trav | Coup
+ * 3. Date éclatée : Jour(sem) | JourNum | Mois | Année | Début | Fin | Durée | Séquence
+ *    (format où la date est répartie sur 4 colonnes avec headers décalés)
  */
 
 import * as XLSX from 'xlsx';
@@ -31,6 +36,9 @@ const MOIS_MAP: Record<string, number> = {
   'jul': 6, 'juil': 6, 'aou': 7, 'aoû': 7, 'aug': 7,
   'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11, 'déc': 11,
 }
+
+// Jours de la semaine français (pour détecter le format date éclatée)
+const JOURS_SEMAINE = ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim']
 
 // Mapping séquence → Activity type (toutes variantes logiciels tachygraphes)
 const SEQUENCE_MAP: Record<string, Activity['type']> = {
@@ -82,6 +90,75 @@ function findColumn(headers: string[], candidates: string[], exclude: string[] =
     if (nc.includes(nh)) return header
   }
   return null
+}
+
+/**
+ * Détecte le format "date éclatée" où la date est sur 4 colonnes :
+ * Jour(semaine) | JourNum | Mois | Année | HeureDébut | HeureFin | Durée | Séquence
+ * Mais les headers sont décalés : Jour | Début | Fin | Durée | Séquence | Cond, | Trav, | Disp,
+ *
+ * Signature : colonne "Jour" contient un jour de semaine (Lun, Mar...) et
+ *             colonne "Début" contient un nombre 1-31 (le numéro du jour)
+ */
+function detectSplitDateFormat(rows: Record<string, any>[], headers: string[]): {
+  isSplitDate: boolean
+  colJourSemaine?: string | null
+  colJourNum?: string | null
+  colMois?: string | null
+  colAnnee?: string | null
+  colDebut?: string | null
+  colFin?: string | null
+  colSequence?: string | null
+  colNom?: string | null
+} {
+  const colJour = findColumn(headers, ['Jour', 'Date'])
+  const colDebut = findColumn(headers, ['Début', 'Debut'], ['ampl'])
+  const colFin = findColumn(headers, ['Fin'], ['ampl'])
+  const colDuree = findColumn(headers, ['Durée', 'Duree'])
+  const colSequence = findColumn(headers, ['Séquence', 'Sequence'])
+  const colCond = findColumn(headers, ['Cond,', 'Cond'])
+  const colDisp = findColumn(headers, ['Disp,', 'Disp'])
+  const colNom = findColumn(headers, ['Nom', 'Conducteur', 'Chauffeur', 'Driver'])
+
+  if (!colJour || !colDebut || !colFin || !colDuree) {
+    return { isSplitDate: false }
+  }
+
+  // Vérifier sur les premières lignes de données
+  let matchCount = 0
+  const sample = rows.slice(0, 10)
+
+  for (const row of sample) {
+    const jourVal = String(row[colJour] || '').toLowerCase().replace(/[.,]/g, '').trim()
+    const debutVal = row[colDebut]
+    const finVal = String(row[colFin] || '').toLowerCase().replace(/[.,]/g, '').trim()
+    const dureeVal = row[colDuree]
+
+    const isJourSemaine = JOURS_SEMAINE.some(j => jourVal.startsWith(j))
+    const isDebutJourNum = typeof debutVal === 'number' && debutVal >= 1 && debutVal <= 31
+    const isMoisFr = Object.keys(MOIS_MAP).some(m => finVal.startsWith(m))
+    const isAnnee = typeof dureeVal === 'number' && dureeVal >= 2020 && dureeVal <= 2035
+
+    if (isJourSemaine && isDebutJourNum && isMoisFr && isAnnee) {
+      matchCount++
+    }
+  }
+
+  if (matchCount >= sample.length * 0.5) {
+    return {
+      isSplitDate: true,
+      colJourSemaine: colJour,
+      colJourNum: colDebut,
+      colMois: colFin,
+      colAnnee: colDuree,
+      colDebut: colSequence,
+      colFin: colCond,
+      colSequence: colDisp,
+      colNom: colNom,
+    }
+  }
+
+  return { isSplitDate: false }
 }
 
 /**
@@ -177,6 +254,37 @@ function addDays(date: { year: number; month: number; day: number }, days: numbe
 }
 
 /**
+ * Injecte des activités REST dans les gaps > 30 min entre activités
+ */
+function injectRestActivities(activities: Activity[]): Activity[] {
+  if (activities.length === 0) return activities
+
+  const sorted = [...activities].sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+  const result: Activity[] = []
+
+  for (let i = 0; i < sorted.length; i++) {
+    result.push(sorted[i])
+
+    if (i < sorted.length - 1) {
+      const currentEnd = new Date(sorted[i].end).getTime()
+      const nextStart = new Date(sorted[i + 1].start).getTime()
+      const gapMin = (nextStart - currentEnd) / 60_000
+
+      if (gapMin > 30) {
+        result.push({
+          type: 'REST',
+          start: sorted[i].end,
+          end: sorted[i + 1].start,
+          duration_minutes: gapMin,
+        })
+      }
+    }
+  }
+
+  return result
+}
+
+/**
  * Parse un fichier Excel chronologique et retourne des Activity[]
  */
 export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
@@ -205,6 +313,101 @@ export async function parseChronoExcel(file: File): Promise<ParsedChronoData> {
 
         // Détecter les colonnes (toutes variantes logiciels tachygraphes)
         const headers = Object.keys(rows[0])
+
+        // ══════════════════════════════════════════════════════
+        // DÉTECTION FORMAT "DATE ÉCLATÉE" (prioritaire)
+        // Format où la date est sur 4 colonnes avec headers décalés
+        // ══════════════════════════════════════════════════════
+        const splitDateInfo = detectSplitDateFormat(rows, headers)
+
+        if (splitDateInfo.isSplitDate) {
+          const activities: Activity[] = []
+          let currentDate: { year: number; month: number; day: number } | null = null
+          const driverBlocks: DriverBlock[] = []
+          const allBlockActivities: Activity[][] = []
+          const activitiesByDriver: Map<string, Activity[]> = new Map()
+
+          for (const row of rows) {
+            const jourNum = row[splitDateInfo.colJourNum!]
+            const moisRaw = String(row[splitDateInfo.colMois!] || '').toLowerCase().replace(/[.,]/g, '').trim()
+            const annee = row[splitDateInfo.colAnnee!]
+
+            if (typeof jourNum === 'number' && typeof annee === 'number') {
+              const moisKey = moisRaw.substring(0, 3)
+              const mois = MOIS_MAP[moisKey]
+              if (mois !== undefined) {
+                currentDate = { year: annee, month: mois, day: jourNum }
+              }
+            }
+
+            if (!currentDate) continue
+
+            const debutVal = row[splitDateInfo.colDebut!]
+            const finVal = row[splitDateInfo.colFin!]
+            const seqVal = String(row[splitDateInfo.colSequence!] || '').trim().toLowerCase()
+
+            const debut = parseTime(debutVal)
+            const fin = parseTime(finVal)
+
+            if (!debut || !fin || !seqVal) continue
+
+            const actType = SEQUENCE_MAP[seqVal] || 'UNKNOWN'
+            const startTs = buildTimestamp(currentDate.year, currentDate.month, currentDate.day, debut.hours, debut.minutes)
+
+            let endDate = currentDate
+            if (fin.hours < debut.hours || (fin.hours === debut.hours && fin.minutes < debut.minutes)) {
+              endDate = addDays(currentDate, 1)
+            }
+            const endTs = buildTimestamp(endDate.year, endDate.month, endDate.day, fin.hours, fin.minutes)
+
+            const durationMin = (new Date(endTs).getTime() - new Date(startTs).getTime()) / 60_000
+            if (durationMin <= 0) continue
+
+            const activity: Activity = { type: actType, start: startTs, end: endTs, duration_minutes: durationMin }
+            activities.push(activity)
+
+            if (splitDateInfo.colNom) {
+              const driverName = String(row[splitDateInfo.colNom] || 'Inconnu').trim()
+              if (!activitiesByDriver.has(driverName)) {
+                activitiesByDriver.set(driverName, [])
+              }
+              activitiesByDriver.get(driverName)!.push(activity)
+            }
+          }
+
+          if (activities.length === 0) {
+            reject(new Error('Aucune activité valide trouvée dans le fichier (format date éclatée détecté).'))
+            return
+          }
+
+          let idx = 0
+          for (const [driverName, acts] of activitiesByDriver.entries()) {
+            acts.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+            driverBlocks.push({ index: idx, vehicles: driverName, dayCount: new Set(acts.map(a => a.start.split('T')[0])).size })
+            allBlockActivities.push(acts)
+            idx++
+          }
+
+          activities.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+          const withRests = injectRestActivities(activities)
+          const allBlockWithRests = allBlockActivities.map(acts => injectRestActivities(acts))
+
+          resolve({
+            activities: withRests,
+            periodStart: withRests[0].start.split('T')[0],
+            periodEnd: withRests[withRests.length - 1].end.split('T')[0],
+            fileName: file.name,
+            rowCount: withRests.length,
+            isDailySummary: false,
+            driverBlocks,
+            allBlockActivities: allBlockWithRests.length > 1 ? allBlockWithRests : undefined,
+          })
+          return
+        }
+
+        // ══════════════════════════════════════════════════════
+        // FORMATS STANDARDS (chronologique ou résumé journalier)
+        // ══════════════════════════════════════════════════════
         const colJour = findColumn(headers, [
           'Jour', 'Date', 'Journée', 'Journee', 'Jour Date', 'Date Jour',
         ])
