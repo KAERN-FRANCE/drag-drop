@@ -42,15 +42,83 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     .from(infractions)
     .where(eq(infractions.analysisId, analysisId))
 
-  // Déterminer la plage des données brutes si elles existent
+  // Déterminer la plage des données brutes et calculer les stats journalières
   let rawDataRange = null
+  let dailyStats: Array<{
+    date: string
+    dateLabel: string
+    drivingMinutes: number
+    workMinutes: number
+    restMinutes: number
+    availabilityMinutes: number
+    amplitudeMinutes: number
+  }> = []
+
   const hasRawActivities = !!analysis.rawActivities
   if (hasRawActivities) {
     try {
-      const acts = JSON.parse(analysis.rawActivities!) as Array<{ start: string }>
+      const acts = JSON.parse(analysis.rawActivities!) as Array<{
+        type: string
+        start: string
+        end: string
+        duration_minutes: number
+      }>
       if (acts.length > 0) {
         const dates = acts.map(a => a.start.split('T')[0]).sort()
         rawDataRange = { min: dates[0], max: dates[dates.length - 1] }
+
+        // Calculer les stats par jour
+        const dayMap = new Map<string, {
+          driving: number
+          work: number
+          rest: number
+          availability: number
+          firstTs: number
+          lastTs: number
+        }>()
+
+        for (const act of acts) {
+          const day = act.start.split('T')[0]
+          if (!dayMap.has(day)) {
+            dayMap.set(day, { driving: 0, work: 0, rest: 0, availability: 0, firstTs: Infinity, lastTs: 0 })
+          }
+          const d = dayMap.get(day)!
+          const startTs = new Date(act.start).getTime()
+          const endTs = new Date(act.end).getTime()
+
+          if (act.type === 'DRIVING') d.driving += act.duration_minutes
+          else if (act.type === 'WORK') d.work += act.duration_minutes
+          else if (act.type === 'REST') d.rest += act.duration_minutes
+          else if (act.type === 'AVAILABILITY') d.availability += act.duration_minutes
+
+          if (act.type !== 'REST') {
+            if (startTs < d.firstTs) d.firstTs = startTs
+            if (endTs > d.lastTs) d.lastTs = endTs
+          }
+        }
+
+        // Filtrer sur la période de l'analyse
+        const periodStartDate = analysis.periodStart
+        const periodEndDate = analysis.periodEnd
+
+        dailyStats = Array.from(dayMap.entries())
+          .filter(([date]) => date >= periodStartDate && date <= periodEndDate)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, stats]) => {
+            const [y, m, day] = date.split('-').map(Number)
+            const d = new Date(y, m - 1, day)
+            const JOURS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam']
+            const MOIS = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc']
+            return {
+              date,
+              dateLabel: `${JOURS[d.getDay()]}. ${day} ${MOIS[m - 1]}. ${y}`,
+              drivingMinutes: Math.round(stats.driving),
+              workMinutes: Math.round(stats.work),
+              restMinutes: Math.round(stats.rest),
+              availabilityMinutes: Math.round(stats.availability),
+              amplitudeMinutes: stats.firstTs < Infinity ? Math.round((stats.lastTs - stats.firstTs) / 60000) : 0,
+            }
+          })
       }
     } catch { /* ignore */ }
   }
@@ -63,6 +131,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     infractions: infrData,
     hasRawActivities,
     rawDataRange,
+    dailyStats,
   })
 }
 

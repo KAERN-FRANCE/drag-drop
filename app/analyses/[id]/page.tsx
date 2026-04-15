@@ -38,6 +38,7 @@ export default function AnalysisDetailPage() {
   const [reanalyzing, setReanalyzing] = useState(false)
   const [hasRawData, setHasRawData] = useState(false)
   const [rawDataRange, setRawDataRange] = useState({ min: "", max: "" })
+  const [dailyStats, setDailyStats] = useState<any[]>([])
 
   const fetchAnalysis = async () => {
     const res = await fetch(`/api/analyses/${id}`, { credentials: 'include' })
@@ -50,6 +51,7 @@ export default function AnalysisDetailPage() {
       })
       setInfractions(data.infractions || [])
       setHasRawData(!!data.hasRawActivities)
+      setDailyStats(data.dailyStats || [])
       if (data.rawDataRange) {
         setRawDataRange(data.rawDataRange)
       }
@@ -231,7 +233,7 @@ export default function AnalysisDetailPage() {
                   <OverviewTab infractions={infractions} />
                 </TabsContent>
                 <TabsContent value="daily">
-                  <DailyTab infractions={infractions} />
+                  <DailyTab infractions={infractions} dailyStats={dailyStats} />
                 </TabsContent>
                 <TabsContent value="weekly">
                   <WeeklyTab infractions={infractions} />
